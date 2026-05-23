@@ -259,12 +259,12 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 return 0u;
             }
 
-            // GetColor returns RGBA packed int (R in high byte, A in low byte).
+            // Block.GetColor returns an ABGR-packed int: (a<<24)|(b<<16)|(g<<8)|r
+            // (same layout as ColorUtil.ColorFromRgba - low byte is R, high byte is A).
+            // ChunkSampler expects 0xRRGGBBAA, so we must re-pack the channels.
             // _samplePos holds the last sampled column position - close enough for tinting.
-            int rgba = block.GetColor(_capi, _samplePos!);
-
-            // Force alpha to fully opaque: OR the low byte with 0xFF.
-            return (uint)(rgba | 0xFF);
+            int abgr = block.GetColor(_capi, _samplePos!);
+            return ColorConvert.AbgrToPackedRgba(abgr);
         };
 
         var tile = ChunkSampler.Sample(heights, topBlockIds, palette);
