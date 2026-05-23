@@ -17,6 +17,9 @@ internal sealed class MapTileStore
 
     private readonly Dictionary<(int Cx, int Cz), byte[]> _tiles = new();
 
+    /// <summary>Number of tiles currently stored.</summary>
+    public int Count => _tiles.Count;
+
     /// <summary>Whether a tile exists for the given chunk coordinates.</summary>
     /// <param name="cx">Chunk X.</param>
     /// <param name="cz">Chunk Z.</param>
