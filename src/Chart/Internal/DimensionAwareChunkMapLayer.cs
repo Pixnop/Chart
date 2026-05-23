@@ -84,7 +84,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         // Re-upload all tiles from the active store so anything loaded while the map
         // was closed still gets rendered.
-        UploadAllStoredTiles();
+        _ = UploadAllStoredTiles();
     }
 
     /// <inheritdoc/>
@@ -161,8 +161,9 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
     /// <summary>
     /// Called by <see cref="ChartModSystem"/> after the active store has been swapped
-    /// to a new dimension. Disposes all current GPU components and rebuilds them from
-    /// the tiles already in the newly active store (fast path for revisited dimensions).
+    /// to a new dimension. Disposes all current GPU components, drains the dirty queue
+    /// (its entries belong to the old dimension), and rebuilds from the tiles already
+    /// in the newly active store (fast path for revisited dimensions).
     /// </summary>
     public void OnActiveStoreSwapped()
     {
@@ -172,7 +173,15 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         }
 
         _components.Clear();
-        UploadAllStoredTiles();
+
+        // Drain the dirty queue so stale chunk coordinates from the old dimension do
+        // not get sampled against the new dimension's block accessor data.
+        while (_dirtyQueue.TryDequeue(out _))
+        {
+        }
+
+        var tiles = UploadAllStoredTiles();
+        _capi?.Logger.Notification("[Chart] swapped active store, repainted {0} tiles.", tiles);
     }
 
     private void OnChunkDirty(Vec3i chunkCoord, IWorldChunk chunk, EnumChunkDirtyReason reason)
@@ -301,22 +310,27 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// Uploads all tiles from the active store to GPU components.
     /// Must be called on the main thread.
     /// </summary>
-    private void UploadAllStoredTiles()
+    /// <returns>Number of tiles uploaded.</returns>
+    private int UploadAllStoredTiles()
     {
         if (_capi == null)
         {
-            return;
+            return 0;
         }
 
         var store = _capi.ModLoader.GetModSystem<ChartModSystem>()?.ActiveStore;
         if (store == null)
         {
-            return;
+            return 0;
         }
 
+        int count = 0;
         foreach (var (key, tile) in store.AllTiles())
         {
             UploadTileToComponent(key.Cx, key.Cz, tile);
+            count++;
         }
+
+        return count;
     }
 }
