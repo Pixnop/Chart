@@ -20,6 +20,18 @@ internal sealed class MapTileStore
     /// <summary>Number of tiles currently stored.</summary>
     public int Count => _tiles.Count;
 
+    /// <summary>
+    /// Enumerates all stored tiles as (chunk-coordinate, tile-bytes) pairs.
+    /// The returned sequence is a snapshot; mutations during enumeration are safe.
+    /// </summary>
+    public IEnumerable<((int Cx, int Cz) Key, byte[] Tile)> AllTiles()
+    {
+        foreach (var kv in _tiles)
+        {
+            yield return (kv.Key, kv.Value);
+        }
+    }
+
     /// <summary>Whether a tile exists for the given chunk coordinates.</summary>
     /// <param name="cx">Chunk X.</param>
     /// <param name="cz">Chunk Z.</param>

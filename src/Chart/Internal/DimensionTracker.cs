@@ -18,6 +18,8 @@ internal sealed class DimensionTracker
 
     private long _listenerId;
 
+    private Action? _onStoreSwapped;
+
     /// <param name="capi">Client API.</param>
     /// <param name="store">The store to notify on dimension change.</param>
     public DimensionTracker(ICoreClientAPI capi, PerDimensionMapStore store)
@@ -26,6 +28,17 @@ internal sealed class DimensionTracker
         ArgumentNullException.ThrowIfNull(store);
         _capi = capi;
         _store = store;
+    }
+
+    /// <summary>
+    /// Optional callback invoked on the main thread immediately after the active store
+    /// is swapped to a new dimension. Used by <see cref="ChartModSystem"/> to notify
+    /// <see cref="DimensionAwareChunkMapLayer"/> so it can rebuild its GPU components.
+    /// </summary>
+    public Action? OnStoreSwapped
+    {
+        get => _onStoreSwapped;
+        set => _onStoreSwapped = value;
     }
 
     /// <summary>
@@ -77,6 +90,9 @@ internal sealed class DimensionTracker
 
         _store.LoadFor(dimCode);
         _capi.Logger.Notification("[Chart] swapped to dim '{0}'", dimCode);
+
+        // Notify the map layer so it can rebuild its GPU components from the new store.
+        _onStoreSwapped?.Invoke();
     }
 
     private string ResolveDimCode(int dimensionId)

@@ -1,3 +1,4 @@
+using System.Linq;
 using Chart.Internal;
 using Xunit;
 
@@ -49,5 +50,28 @@ public sealed class MapTileStoreTests
         Assert.False(MapTileStore.FromBytes(System.Array.Empty<byte>()).HasTile(0, 0));
         var corrupt = MapTileStore.FromBytes(new byte[] { 0xFF, 0x01, 0x02 });
         Assert.False(corrupt.HasTile(0, 0));
+    }
+
+    [Fact]
+    public void AllTiles_Returns_All_Stored_Tiles()
+    {
+        var store = new MapTileStore();
+        var tileA = new byte[ChunkSampler.TileBytes]; tileA[0] = 0xAA;
+        var tileB = new byte[ChunkSampler.TileBytes]; tileB[0] = 0xBB;
+        store.SetTile(1, 2, tileA);
+        store.SetTile(-3, 4, tileB);
+
+        var all = store.AllTiles().ToList();
+
+        Assert.Equal(2, all.Count);
+        Assert.Contains(all, t => t.Key.Cx == 1 && t.Key.Cz == 2 && t.Tile[0] == 0xAA);
+        Assert.Contains(all, t => t.Key.Cx == -3 && t.Key.Cz == 4 && t.Tile[0] == 0xBB);
+    }
+
+    [Fact]
+    public void AllTiles_Empty_Store_Returns_Empty_Sequence()
+    {
+        var store = new MapTileStore();
+        Assert.Empty(store.AllTiles());
     }
 }

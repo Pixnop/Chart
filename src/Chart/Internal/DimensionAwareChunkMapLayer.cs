@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -7,13 +8,31 @@ using Vintagestory.GameContent;
 namespace Chart.Internal;
 
 /// <summary>
-/// Map layer skeleton that registers with WorldMapManager.
-/// Renders nothing yet; full tile painting comes in a later task.
+/// Map layer that samples chunks into RGBA tiles using <see cref="ChunkSampler"/>,
+/// stores them in the active dimension's <see cref="MapTileStore"/>, and renders them
+/// on the world map via <see cref="MultiChunkMapComponent"/>.
+///
+/// Rendering path: manual MultiChunkMapComponent path. We instantiate
+/// MultiChunkMapComponent directly (public API) and call its Render method,
+/// bypassing ChunkMapLayer's private loadFromChunkPixels. This gives us full
+/// control over which store is active without coupling to ChunkMapLayer internals.
 /// </summary>
 internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 {
-    // MapLayer.api is ICoreAPI; cached cast to client side for all client operations.
+    // MapLayer.api is ICoreAPI; cache the client cast for all client operations.
     private readonly ICoreClientAPI? _capi;
+
+    // One MultiChunkMapComponent per chunk column rendered on the map.
+    // Key: (chunkX, chunkZ) in chunk coordinates.
+    // Accessed only on the main thread (Render / OnTick).
+    private readonly Dictionary<(int Cx, int Cz), MultiChunkMapComponent> _components = new();
+
+    // Tracks which chunk columns are pending a re-sample. Filled by the ChunkDirty
+    // callback (any thread) and drained on the main thread in OnTick.
+    private readonly ConcurrentQueue<(int Cx, int Cz)> _dirtyQueue = new();
+
+    // Reused BlockPos to avoid per-column allocation during sampling.
+    private BlockPos? _samplePos;
 
     /// <summary>
     /// VS instantiates map layers via Activator.CreateInstance(typeof(T), api, mapSink).
@@ -25,8 +44,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         _capi = api as ICoreClientAPI;
     }
 
-    // --- MapLayer abstract properties ---
-
     /// <inheritdoc/>
     public override string Title => "Chart";
 
@@ -35,8 +52,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
     /// <inheritdoc/>
     public override EnumMapAppSide DataSide => EnumMapAppSide.Client;
-
-    // --- RGBMapLayer abstract properties ---
 
     /// <inheritdoc/>
     public override MapLegendItem[] LegendItems => System.Array.Empty<MapLegendItem>();
@@ -47,13 +62,29 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// <inheritdoc/>
     public override EnumMinMagFilter MinFilter => EnumMinMagFilter.Nearest;
 
-    // --- Lifecycle overrides ---
+    /// <inheritdoc/>
+    public override void OnLoaded()
+    {
+        base.OnLoaded();
+        if (_capi == null)
+        {
+            return;
+        }
+
+        // Dimension 0 is the overworld; the actual dimension is set in Set() calls.
+        _samplePos = new BlockPos(0);
+        _capi.Event.ChunkDirty += OnChunkDirty;
+    }
 
     /// <inheritdoc/>
     public override void OnMapOpenedClient()
     {
         _capi?.Logger.Notification("[Chart] map opened");
         base.OnMapOpenedClient();
+
+        // Re-upload all tiles from the active store so anything loaded while the map
+        // was closed still gets rendered.
+        UploadAllStoredTiles();
     }
 
     /// <inheritdoc/>
@@ -66,18 +97,226 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// <inheritdoc/>
     public override void OnViewChangedClient(List<FastVec2i> nowVisible, List<FastVec2i> nowHidden)
     {
-        // No-op stub - tile generation wired in a later task.
+        if (_capi == null)
+        {
+            return;
+        }
+
+        // Queue newly visible chunks for (re-)generation.
+        foreach (var v in nowVisible)
+        {
+            _dirtyQueue.Enqueue((v.X, v.Y));
+        }
+    }
+
+    /// <inheritdoc/>
+    public override void OnTick(float dt)
+    {
+        base.OnTick(dt);
+        if (_capi == null)
+        {
+            return;
+        }
+
+        // Drain the dirty queue - each entry is a chunk column to (re-)sample.
+        const int maxPerTick = 32;
+        int processed = 0;
+        while (processed < maxPerTick && _dirtyQueue.TryDequeue(out var coord))
+        {
+            ProcessChunk(coord.Cx, coord.Cz);
+            processed++;
+        }
     }
 
     /// <inheritdoc/>
     public override void Render(GuiElementMap mapElem, float dt)
     {
-        // No-op stub - GPU blit wired in a later task.
+        if (!Active || _capi == null)
+        {
+            return;
+        }
+
+        foreach (var comp in _components.Values)
+        {
+            comp.Render(mapElem, dt);
+        }
     }
 
     /// <inheritdoc/>
     public override void Dispose()
     {
+        if (_capi != null)
+        {
+            _capi.Event.ChunkDirty -= OnChunkDirty;
+        }
+
+        foreach (var comp in _components.Values)
+        {
+            comp.ActuallyDispose();
+        }
+
+        _components.Clear();
         base.Dispose();
+    }
+
+    /// <summary>
+    /// Called by <see cref="ChartModSystem"/> after the active store has been swapped
+    /// to a new dimension. Disposes all current GPU components and rebuilds them from
+    /// the tiles already in the newly active store (fast path for revisited dimensions).
+    /// </summary>
+    public void OnActiveStoreSwapped()
+    {
+        foreach (var comp in _components.Values)
+        {
+            comp.ActuallyDispose();
+        }
+
+        _components.Clear();
+        UploadAllStoredTiles();
+    }
+
+    private void OnChunkDirty(Vec3i chunkCoord, IWorldChunk chunk, EnumChunkDirtyReason reason)
+    {
+        if (reason == EnumChunkDirtyReason.NewlyLoaded ||
+            reason == EnumChunkDirtyReason.MarkedDirty)
+        {
+            // chunkCoord.X/Z are chunk coordinates; Y is the vertical slice index.
+            // Multiple vertical slices fire per column - deduplicated at ProcessChunk time.
+            _dirtyQueue.Enqueue((chunkCoord.X, chunkCoord.Z));
+        }
+    }
+
+    /// <summary>
+    /// Samples one chunk column and pushes the result into the tile store and the
+    /// GPU component. Must run on the main thread (GPU upload).
+    /// </summary>
+    private void ProcessChunk(int cx, int cz)
+    {
+        if (_capi == null)
+        {
+            return;
+        }
+
+        var mc = _capi.World.BlockAccessor.GetMapChunk(cx, cz);
+        if (mc == null)
+        {
+            return;
+        }
+
+        var store = _capi.ModLoader.GetModSystem<ChartModSystem>()?.ActiveStore;
+        if (store == null)
+        {
+            return;
+        }
+
+        // Build height array (int[] as ChunkSampler requires).
+        var rainHeight = mc.RainHeightMap;
+        var heights = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
+        for (int i = 0; i < heights.Length; i++)
+        {
+            heights[i] = rainHeight[i];
+        }
+
+        // Build top-block-id array: for each column read the block at the rain height.
+        var topBlockIds = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
+        for (int z = 0; z < ChunkSampler.TileEdge; z++)
+        {
+            for (int x = 0; x < ChunkSampler.TileEdge; x++)
+            {
+                int i = (z * ChunkSampler.TileEdge) + x;
+                int worldX = (cx * ChunkSampler.TileEdge) + x;
+                int worldY = heights[i];
+                int worldZ = (cz * ChunkSampler.TileEdge) + z;
+
+                if (worldY <= 0)
+                {
+                    topBlockIds[i] = 0;
+                    continue;
+                }
+
+                _samplePos!.Set(worldX, worldY, worldZ);
+                var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
+                topBlockIds[i] = block?.Id ?? 0;
+            }
+        }
+
+        // Build palette: block-id -> 0xRRGGBBAA packed uint.
+        // System.Func is explicit to avoid ambiguity with Vintagestory.API.Common.Func.
+        System.Func<int, uint> palette = blockId =>
+        {
+            var block = _capi.World.GetBlock(blockId);
+            if (block == null)
+            {
+                return 0u;
+            }
+
+            // GetColor returns RGBA packed int (R in high byte, A in low byte).
+            // _samplePos holds the last sampled column position - close enough for tinting.
+            int rgba = block.GetColor(_capi, _samplePos!);
+
+            // Force alpha to fully opaque: OR the low byte with 0xFF.
+            return (uint)(rgba | 0xFF);
+        };
+
+        var tile = ChunkSampler.Sample(heights, topBlockIds, palette);
+        store.SetTile(cx, cz, tile);
+        UploadTileToComponent(cx, cz, tile);
+    }
+
+    /// <summary>
+    /// Converts a ChunkSampler RGBA byte[] tile to int[] RGBA pixel array and
+    /// creates or updates the <see cref="MultiChunkMapComponent"/> for (cx, cz).
+    /// </summary>
+    private void UploadTileToComponent(int cx, int cz, byte[] tile)
+    {
+        if (_capi == null)
+        {
+            return;
+        }
+
+        // Convert byte[] RGBA (4 bytes per pixel) to int[] RGBA (1 int per pixel).
+        var pixels = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            int b = i * 4;
+            int r = tile[b];
+            int g = tile[b + 1];
+            int bl = tile[b + 2];
+            int a = tile[b + 3];
+            pixels[i] = ColorUtil.ColorFromRgba(r, g, bl, a);
+        }
+
+        if (!_components.TryGetValue((cx, cz), out var comp))
+        {
+            comp = new MultiChunkMapComponent(_capi, new FastVec2i(cx, cz));
+            _components[(cx, cz)] = comp;
+        }
+
+        // dx=0, dz=0: one component per chunk (not the 3x3 grouping ChunkMapLayer uses).
+        comp.setChunk(0, 0, pixels);
+        comp.FinishSetChunks();
+    }
+
+    /// <summary>
+    /// Uploads all tiles from the active store to GPU components.
+    /// Must be called on the main thread.
+    /// </summary>
+    private void UploadAllStoredTiles()
+    {
+        if (_capi == null)
+        {
+            return;
+        }
+
+        var store = _capi.ModLoader.GetModSystem<ChartModSystem>()?.ActiveStore;
+        if (store == null)
+        {
+            return;
+        }
+
+        foreach (var (key, tile) in store.AllTiles())
+        {
+            UploadTileToComponent(key.Cx, key.Cz, tile);
+        }
     }
 }
