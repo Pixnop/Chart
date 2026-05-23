@@ -8,6 +8,7 @@
   "side": "Client",
   "dependencies": {
     "game": "",
+    "vsessentials": "",
     "manifold": "0.3.1"
   }
 }

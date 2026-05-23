@@ -1,5 +1,7 @@
+using Chart.Internal;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.GameContent;
 
 namespace Chart;
 
@@ -13,6 +15,10 @@ public sealed class ChartModSystem : ModSystem
     public override void StartClientSide(ICoreClientAPI api)
     {
         base.StartClientSide(api);
-        api.Logger.Notification("[Chart] Loaded (boot stub).");
+        var mapManager = api.ModLoader.GetModSystem<WorldMapManager>();
+
+        // Position 0.5 places this layer between the terrain layer (0.0) and marker layers (1.0).
+        mapManager.RegisterMapLayer<DimensionAwareChunkMapLayer>("chart", 0.5);
+        api.Logger.Notification("[Chart] Registered DimensionAwareChunkMapLayer.");
     }
 }

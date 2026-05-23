@@ -18,6 +18,10 @@
       <HintPath>$(VINTAGE_STORY)\VintagestoryLib.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="VSEssentials">
+      <HintPath>$(VINTAGE_STORY)\Mods\VSEssentials.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <ProjectReference Include="..\..\src\Manifold\Manifold.csproj">
       <Private>false</Private>
     </ProjectReference>
