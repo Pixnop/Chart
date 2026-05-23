@@ -1,0 +1,13 @@
+{
+  "type": "code",
+  "modid": "chart",
+  "name": "Chart",
+  "version": "0.1.0",
+  "description": "Dimension-aware world map for Manifold custom dimensions. Companion to Manifold. Client-side only.",
+  "authors": ["Pixnop"],
+  "side": "Client",
+  "dependencies": {
+    "game": "",
+    "manifold": "0.3.1"
+  }
+}
