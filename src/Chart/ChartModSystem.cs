@@ -1,3 +1,4 @@
+using System.Linq;
 using Chart.Internal;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -49,6 +50,31 @@ public sealed class ChartModSystem : ModSystem
         // Position 0.5 places this layer between the terrain layer (0.0) and marker layers (1.0).
         mapManager.RegisterMapLayer<DimensionAwareChunkMapLayer>("chart", 0.5);
         api.Logger.Notification("[Chart] Registered DimensionAwareChunkMapLayer.");
+
+        // Hide the vanilla terrain layer so Chart is the sole terrain renderer.
+        // MapLayer.Active is a public settable property (confirmed in VS 1.22.2 API notes).
+        // We enumerate first to log what is present, then deactivate the vanilla layer.
+        foreach (var layer in mapManager.MapLayers)
+        {
+            api.Logger.Notification(
+                "[Chart] MapLayer present: {0} code={1}",
+                layer.GetType().FullName,
+                layer.LayerGroupCode);
+        }
+
+        var vanilla = mapManager.MapLayers.FirstOrDefault(
+            l => l.GetType().Name == "ChunkMapLayer");
+        if (vanilla is not null)
+        {
+            vanilla.Active = false;
+            api.Logger.Notification(
+                "[Chart] Deactivated vanilla ChunkMapLayer (type={0}).",
+                vanilla.GetType().FullName);
+        }
+        else
+        {
+            api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
+        }
     }
 
     /// <inheritdoc/>
