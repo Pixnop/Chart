@@ -51,30 +51,34 @@ public sealed class ChartModSystem : ModSystem
         mapManager.RegisterMapLayer<DimensionAwareChunkMapLayer>("chart", 0.5);
         api.Logger.Notification("[Chart] Registered DimensionAwareChunkMapLayer.");
 
-        // Hide the vanilla terrain layer so Chart is the sole terrain renderer.
-        // MapLayer.Active is a public settable property (confirmed in VS 1.22.2 API notes).
-        // We enumerate first to log what is present, then deactivate the vanilla layer.
-        foreach (var layer in mapManager.MapLayers)
+        // The vanilla MapLayers are instantiated by WorldMapManager AFTER all ModSystems'
+        // StartClientSide complete, so the MapLayers collection is empty at this point.
+        // Defer the enumeration + vanilla-hide to LevelFinalize, which fires once the world
+        // is fully loaded and every MapLayer (ours included) has been instantiated.
+        api.Event.LevelFinalize += () =>
         {
-            api.Logger.Notification(
-                "[Chart] MapLayer present: {0} code={1}",
-                layer.GetType().FullName,
-                layer.LayerGroupCode);
-        }
+            foreach (var layer in mapManager.MapLayers)
+            {
+                api.Logger.Notification(
+                    "[Chart] MapLayer present: {0} code={1}",
+                    layer.GetType().FullName,
+                    layer.LayerGroupCode);
+            }
 
-        var vanilla = mapManager.MapLayers.FirstOrDefault(
-            l => l.GetType().Name == "ChunkMapLayer");
-        if (vanilla is not null)
-        {
-            vanilla.Active = false;
-            api.Logger.Notification(
-                "[Chart] Deactivated vanilla ChunkMapLayer (type={0}).",
-                vanilla.GetType().FullName);
-        }
-        else
-        {
-            api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
-        }
+            var vanilla = mapManager.MapLayers.FirstOrDefault(
+                l => l.GetType().Name == "ChunkMapLayer");
+            if (vanilla is not null)
+            {
+                vanilla.Active = false;
+                api.Logger.Notification(
+                    "[Chart] Deactivated vanilla ChunkMapLayer (type={0}).",
+                    vanilla.GetType().FullName);
+            }
+            else
+            {
+                api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
+            }
+        };
     }
 
     /// <inheritdoc/>
