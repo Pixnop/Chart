@@ -1,21 +1,28 @@
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.GameContent;
 
 namespace Chart.Internal;
 
 /// <summary>
-/// Map layer that samples chunks into RGBA tiles using <see cref="ChunkSampler"/>,
-/// stores them in the active dimension's <see cref="MapTileStore"/>, and renders them
-/// on the world map via <see cref="MultiChunkMapComponent"/>.
+/// Map layer that samples chunks into RGBA tiles using the vanilla
+/// <c>ChunkMapLayer</c> palette + hillshade pipeline, stores them in the active
+/// dimension's <see cref="MapTileStore"/>, and renders them on the world map via
+/// <see cref="MultiChunkMapComponent"/>.
 ///
-/// Rendering path: manual MultiChunkMapComponent path. We instantiate
-/// MultiChunkMapComponent directly (public API) and call its Render method,
-/// bypassing ChunkMapLayer's private loadFromChunkPixels. This gives us full
-/// control over which store is active without coupling to ChunkMapLayer internals.
+/// Vanilla rendering pipeline (default / non-colorAccurate path):
+/// 1. Fixed 13-colour material palette (see <see cref="VanillaMapPalette"/>).
+/// 2. Surface height from <c>IMapChunk.RainHeightMap</c>; fallback scan for custom dims.
+/// 3. Block lookup via <c>IWorldChunk.UnpackAndReadBlock(FluidOrSolid)</c>.
+/// 4. Snow skip: if the top block is snow, sample Y-1 for the real terrain.
+/// 5. Water/ice edge: if a lake pixel has any non-lake cardinal neighbour, paint it as "wateredge".
+/// 6. Shadow map: per-pixel brightness from 3-neighbour (NW, N, W) slope, box-blurred (r=2),
+///    then combined blurred+raw formula (see vanilla GenerateChunkImage section 6).
 /// </summary>
 internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 {
@@ -31,12 +38,18 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     // callback (any thread) and drained on the main thread in OnTick.
     private readonly ConcurrentQueue<(int Cx, int Cz)> _dirtyQueue = new();
 
+    // Palette built once in OnLoaded.
+    private readonly VanillaMapPalette _palette = new();
+
     // Diagnostic counter: log the first few ProcessChunk calls after each swap so we can
-    // verify which dim we are actually sampling (player dim vs tracker's expected dim).
+    // verify which dim we are actually sampling.
     private int _diagLogCounter;
 
     // Reused BlockPos to avoid per-column allocation during sampling.
     private BlockPos? _samplePos;
+
+    // Chunk size (typically 32). Cached once in OnLoaded.
+    private int _chunkSize;
 
     /// <summary>
     /// VS instantiates map layers via Activator.CreateInstance(typeof(T), api, mapSink).
@@ -58,7 +71,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     public override EnumMapAppSide DataSide => EnumMapAppSide.Client;
 
     /// <inheritdoc/>
-    public override MapLegendItem[] LegendItems => System.Array.Empty<MapLegendItem>();
+    public override MapLegendItem[] LegendItems => Array.Empty<MapLegendItem>();
 
     /// <inheritdoc/>
     public override EnumMinMagFilter MagFilter => EnumMinMagFilter.Nearest;
@@ -75,8 +88,14 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             return;
         }
 
-        // Dimension 0 is the overworld; the actual dimension is set in Set() calls.
+        _chunkSize = GlobalConstants.ChunkSize;
+
+        // Dimension 0 is the overworld; the actual dimension is set each ProcessChunk call.
         _samplePos = new BlockPos(0);
+
+        // Build the vanilla material palette from the full block registry.
+        _palette.Build(_capi.World.Blocks);
+
         _capi.Event.ChunkDirty += OnChunkDirty;
     }
 
@@ -210,6 +229,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// <summary>
     /// Samples one chunk column and pushes the result into the tile store and the
     /// GPU component. Must run on the main thread (GPU upload).
+    /// Uses the vanilla ChunkMapLayer default rendering pipeline.
     /// </summary>
     private void ProcessChunk(int cx, int cz)
     {
@@ -230,157 +250,325 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             return;
         }
 
-        // Diagnostic: log dim at sample time for the first chunk after a swap. _diagLogCounter resets on swap.
-        if (_diagLogCounter < 3)
-        {
-            int dimAtSample = -1;
-            try { dimAtSample = _capi.World.Player?.Entity?.Pos.Dimension ?? -1; }
-            catch { dimAtSample = -2; }
-            _capi.Logger.Notification(
-                "[Chart] diag ProcessChunk cx={0} cz={1} playerDim={2} center-height={3}",
-                cx, cz, dimAtSample, mc.RainHeightMap[16 * 32 + 16]);
-            _diagLogCounter++;
-        }
-
-        // BlockAccessor.GetBlock(BlockPos) reads from the BlockPos's `dimension` field, NOT
-        // from the player's current dimension. _samplePos was constructed with dim=0 and our
-        // Set(x,y,z) overload does not touch the dim. We must set it explicitly each call
-        // so the sample reads from the dim the player is actually in.
+        // BlockAccessor.GetBlock(BlockPos) reads from the BlockPos's `dimension` field.
+        // _samplePos was constructed with dim=0 - set the correct dim explicitly each call.
         int currentDim = _capi.World.Player?.Entity?.Pos.Dimension ?? 0;
         _samplePos!.dimension = currentDim;
 
-        // Step 1: try BlockAccessor.GetRainMapHeightAt - O(1) when the dim's heightmap
-        // is populated (vanilla overworld dim is fine here).
-        // Step 2: if it returns 0 or points at air (custom Manifold dims don't always
-        // populate the IMapChunk heightmap), fall back to a bounded scan around the
-        // player's current Y - cheap and dim-correct since _samplePos carries the dim.
-        var heights = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
-        var topBlockIds = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
-        int maxY = _capi.World.BlockAccessor.MapSizeY - 1;
-        int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
-        int scanTop = System.Math.Min(maxY, playerY + 64);
-        for (int z = 0; z < ChunkSampler.TileEdge; z++)
+        // Diagnostic: log dim at sample time for the first chunk after a swap.
+        if (_diagLogCounter < 3)
         {
-            for (int x = 0; x < ChunkSampler.TileEdge; x++)
+            _capi.Logger.Notification(
+                "[Chart] diag ProcessChunk cx={0} cz={1} playerDim={2} center-height={3}",
+                cx,
+                cz,
+                currentDim,
+                mc.RainHeightMap[16 * 32 + 16]);
+            _diagLogCounter++;
+        }
+
+        int cs = _chunkSize;
+        int mapSizeY = _capi.World.BlockAccessor.MapSizeY;
+        int numChunkSlices = mapSizeY / cs;
+
+        // Prefetch all vertical chunk slices (vanilla pattern).
+        // Bail if any slice is null or not yet received from the server.
+        var chunkSlices = new IWorldChunk[numChunkSlices];
+        for (int cy = 0; cy < numChunkSlices; cy++)
+        {
+            var slice = _capi.World.BlockAccessor.GetChunk(cx, cy, cz);
+            if (slice == null || !(slice is IClientChunk clientSlice && clientSlice.LoadedFromServer))
             {
-                int i = (z * ChunkSampler.TileEdge) + x;
-                int worldX = (cx * ChunkSampler.TileEdge) + x;
-                int worldZ = (cz * ChunkSampler.TileEdge) + z;
-
-                _samplePos!.Set(worldX, 0, worldZ);
-                int y = _capi.World.BlockAccessor.GetRainMapHeightAt(_samplePos);
-
-                int foundBlockId = 0;
-                if (y > 0 && y <= maxY)
+                // Some slices can legitimately be null for very tall worlds above build height;
+                // only bail if a low slice is missing. Use a conservative threshold.
+                if (cy < numChunkSlices / 2)
                 {
-                    _samplePos.Set(worldX, y, worldZ);
-                    var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
-                    foundBlockId = block?.Id ?? 0;
+                    // Low portion of the world is not loaded yet - defer.
+                    return;
                 }
 
-                // Fallback scan when the heightmap returned nothing or pointed at air.
-                // Scan a window around the player's Y, which is dim-correct.
-                if (foundBlockId == 0)
+                // Upper slices may simply not exist above the build height.
+                // Leave them null; we guard with (cy < chunkSlices.Length) checks below.
+                chunkSlices[cy] = null!;
+                continue;
+            }
+
+            chunkSlices[cy] = slice;
+        }
+
+        // Fetch neighbour map chunks for cross-chunk slope calculation (vanilla pattern).
+        var mcNW = _capi.World.BlockAccessor.GetMapChunk(cx - 1, cz - 1);
+        var mcW  = _capi.World.BlockAccessor.GetMapChunk(cx - 1, cz);
+        var mcN  = _capi.World.BlockAccessor.GetMapChunk(cx,     cz - 1);
+
+        int pixCount = cs * cs;
+        var tintedImage = new int[pixCount];
+
+        // Shadow map (1 byte per pixel, 128 = neutral brightness).
+        var shadowMap = new byte[pixCount];
+        for (int i = 0; i < shadowMap.Length; i++)
+        {
+            shadowMap[i] = 128;
+        }
+
+        int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
+        int scanTop = Math.Min(mapSizeY - 1, playerY + 64);
+
+        for (int i = 0; i < pixCount; i++)
+        {
+            // Local (lx, lz) within this chunk (0..31).
+            int lx = i % cs;
+            int lz = i / cs;
+
+            // --- Surface height ---
+            // Primary: RainHeightMap (vanilla uses this directly).
+            int y = mc.RainHeightMap[i];
+            int cy = y / cs;
+
+            // Guard: if cy is out of range for the prefetched slices, skip the pixel.
+            if (cy >= numChunkSlices)
+            {
+                continue;
+            }
+
+            // --- Slope / shadow factor (vanilla 3-neighbour NW, N, W) ---
+            float b = 1f;
+            int topX  = lx - 1;
+            int leftZ = lz - 1;
+            int botX  = lx;
+            int rightZ = lz;
+
+            IMapChunk leftTopMc  = mc;
+            IMapChunk rightTopMc = mc;
+            IMapChunk leftBotMc  = mc;
+
+            if (topX < 0 && leftZ < 0)
+            {
+                leftTopMc  = mcNW!;
+                rightTopMc = mcW!;
+                leftBotMc  = mcN!;
+            }
+            else
+            {
+                if (topX  < 0) { leftTopMc  = mcW!; rightTopMc = mcW!; }
+                if (leftZ < 0) { leftTopMc  = mcN!; leftBotMc  = mcN!; }
+            }
+
+            int topXMod  = GameMath.Mod(topX,  cs);
+            int leftZMod = GameMath.Mod(leftZ, cs);
+
+            int leftTop  = leftTopMc  == null ? 0 : (y - leftTopMc .RainHeightMap[(leftZMod  * cs) + topXMod]);
+            int rightTop = rightTopMc == null ? 0 : (y - rightTopMc.RainHeightMap[(rightZ    * cs) + topXMod]);
+            int leftBot  = leftBotMc  == null ? 0 : (y - leftBotMc .RainHeightMap[(leftZMod  * cs) + botX]);
+
+            float slopedir  = Math.Sign(leftTop) + Math.Sign(rightTop) + Math.Sign(leftBot);
+            float steepness = Math.Max(Math.Max(Math.Abs(leftTop), Math.Abs(rightTop)), Math.Abs(leftBot));
+
+            if (slopedir > 0f) b = 1.08f + Math.Min(0.5f, steepness / 10f) / 1.25f;
+            if (slopedir < 0f) b = 0.92f - Math.Min(0.5f, steepness / 10f) / 1.25f;
+
+            // --- Block lookup via UnpackAndReadBlock(FluidOrSolid) ---
+            var currentSlice = chunkSlices[cy];
+            int blockId;
+            Block block;
+
+            if (currentSlice != null)
+            {
+                blockId = currentSlice.UnpackAndReadBlock(
+                    MapUtil.Index3d(lx, y % cs, lz, cs, cs),
+                    BlockLayersAccess.FluidOrSolid);
+                block = _capi.World.Blocks[blockId];
+            }
+            else
+            {
+                blockId = 0;
+                block = _capi.World.Blocks[0];
+            }
+
+            // --- Fallback scan for custom Manifold dims (RainHeightMap may be 0 there) ---
+            // Vanilla worldgen populates RainHeightMap; Manifold custom dims do not.
+            // Without this fallback, custom dims render empty.
+            if (blockId == 0 || block == null || block.Id == 0)
+            {
+                _samplePos!.Set((cx * cs) + lx, 0, (cz * cs) + lz);
+                for (int yy = scanTop; yy > 0; yy--)
                 {
-                    for (int yy = scanTop; yy > 0; yy--)
+                    _samplePos.Set((cx * cs) + lx, yy, (cz * cs) + lz);
+                    var fb = _capi.World.BlockAccessor.GetBlock(_samplePos);
+                    if (fb != null && fb.Id != 0)
                     {
-                        _samplePos.Set(worldX, yy, worldZ);
-                        var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
-                        if (block != null && block.Id != 0)
-                        {
-                            y = yy;
-                            foundBlockId = block.Id;
-                            break;
-                        }
+                        y = yy;
+                        cy = y / cs;
+                        blockId = fb.Id;
+                        block = fb;
+                        break;
                     }
                 }
 
-                heights[i] = foundBlockId == 0 ? 0 : y;
-                topBlockIds[i] = foundBlockId;
+                // If still nothing found, leave pixel transparent and continue.
+                if (block == null || block.Id == 0)
+                {
+                    continue;
+                }
+            }
+
+            // --- Snow skip (vanilla default mode) ---
+            // If the surface block is snow, peek one block lower to get the actual terrain.
+            if (block.BlockMaterial == EnumBlockMaterial.Snow && y > 0)
+            {
+                int yBelow = y - 1;
+                int cyBelow = yBelow / cs;
+                if (cyBelow < numChunkSlices && chunkSlices[cyBelow] != null)
+                {
+                    int belowId = chunkSlices[cyBelow].UnpackAndReadBlock(
+                        MapUtil.Index3d(lx, yBelow % cs, lz, cs, cs),
+                        BlockLayersAccess.FluidOrSolid);
+                    if (belowId != 0)
+                    {
+                        block = _capi.World.Blocks[belowId];
+                        y = yBelow;
+                    }
+                }
+            }
+
+            // --- Colour assignment ---
+            if (VanillaMapPalette.IsLake(block))
+            {
+                // Water/ice edge detection: if any cardinal neighbour (N, S, E, W) is
+                // non-lake, render this pixel as "wateredge" (dark shoreline).
+                // Shadow factor is NOT applied to water pixels.
+                bool allLake = IsNeighbourLake(cx, cz, lx, lz, y, cs, chunkSlices, numChunkSlices);
+                tintedImage[i] = allLake ? _palette.GetColor(block.Id) : _palette.WaterEdgeColor;
+            }
+            else
+            {
+                // Write brightness factor into shadow map.
+                shadowMap[i] = (byte)Math.Max(0, Math.Min(255, shadowMap[i] * b));
+                tintedImage[i] = _palette.GetColor(block.Id);
             }
         }
 
-        // Build palette: block-id -> 0xRRGGBBAA packed uint.
-        // System.Func is explicit to avoid ambiguity with Vintagestory.API.Common.Func.
-        System.Func<int, uint> palette = blockId =>
+        // --- Shadow map blur + apply (vanilla formula) ---
+        // Keep a copy of the raw pre-blur shadow values.
+        var rawShadow = new byte[shadowMap.Length];
+        Array.Copy(shadowMap, rawShadow, shadowMap.Length);
+
+        // Box-blur the shadow map with radius 2 over the 32x32 tile.
+        BlurTool.Blur(shadowMap, cs, cs, 2);
+
+        // Combine blurred and raw shadows and apply to each pixel colour.
+        for (int i = 0; i < pixCount; i++)
         {
-            var block = _capi.World.GetBlock(blockId);
-            if (block == null)
-            {
-                return 0u;
-            }
+            // Blurred component (quantised brightness step).
+            float bVal = (int)((shadowMap[i] / 128f - 1f) * 5) / 5f;
+            // Raw component (fractional sharp-edge detail added back).
+            bVal += ((rawShadow[i] / 128f - 1f) * 5 % 1) / 5f;
 
-            // Block.GetColor returns an ABGR-packed int: (a<<24)|(b<<16)|(g<<8)|r
-            // (same layout as ColorUtil.ColorFromRgba - low byte is R, high byte is A).
-            // ChunkSampler expects 0xRRGGBBAA, so we must re-pack the channels.
-            // _samplePos holds the last sampled column position - close enough for tinting.
-            int abgr = block.GetColor(_capi, _samplePos!);
-            return ColorConvert.AbgrToPackedRgba(abgr);
-        };
+            // Apply to pixel colour and force alpha = 255.
+            tintedImage[i] = ColorUtil.ColorMultiply3Clamped(tintedImage[i], bVal + 1f) | (255 << 24);
+        }
 
-        var tile = ChunkSampler.Sample(heights, topBlockIds, palette);
-        ApplyHillshade(tile, heights);
+        // Convert int[] BGRA to byte[] BGRA tile (4 bytes per pixel).
+        var tile = IntArrayToByteTile(tintedImage);
         store.SetTile(cx, cz, tile);
-        UploadTileToComponent(cx, cz, tile);
+        UploadTileToComponent(cx, cz, tintedImage);
     }
 
     /// <summary>
-    /// Vanilla-style relief shading: each column is brightened or darkened relative to
-    /// the column to the north (z-1). Higher than the neighbour gets +15 percent, lower
-    /// gets -15 percent. Produces the 3D topographic look the vanilla map has.
+    /// Checks whether all 4 cardinal neighbours (N, S, E, W) at the same Y are lake blocks.
+    /// Returns false if any neighbour is non-lake, which signals that this pixel should be
+    /// rendered as a shoreline ("wateredge").
     /// </summary>
-    private static void ApplyHillshade(byte[] tile, int[] heights)
+    private bool IsNeighbourLake(
+        int cx, int cz,
+        int lx, int lz,
+        int y,
+        int cs,
+        IWorldChunk[] slices,
+        int numSlices)
     {
-        const int edge = ChunkSampler.TileEdge;
-        for (int z = 0; z < edge; z++)
+        int cy = y / cs;
+        int yLocal = y % cs;
+        if (cy >= numSlices || slices[cy] == null)
         {
-            for (int x = 0; x < edge; x++)
+            return true; // can't tell; treat as interior water
+        }
+
+        // The 4 cardinal offsets: (dx, dz) pairs.
+        Span<(int dx, int dz)> offsets = stackalloc (int, int)[] { (0, -1), (0, 1), (-1, 0), (1, 0) };
+        foreach (var (dx, dz) in offsets)
+        {
+            int nx = lx + dx;
+            int nz = lz + dz;
+
+            Block? nb;
+            if (nx >= 0 && nx < cs && nz >= 0 && nz < cs)
             {
-                int i = (z * edge) + x;
-                if (heights[i] == 0)
+                // Same chunk.
+                int nId = slices[cy].UnpackAndReadBlock(
+                    MapUtil.Index3d(nx, yLocal, nz, cs, cs),
+                    BlockLayersAccess.FluidOrSolid);
+                nb = _capi!.World.Blocks[nId];
+            }
+            else
+            {
+                // Cross-chunk neighbour.
+                int ncx = cx + (nx < 0 ? -1 : (nx >= cs ? 1 : 0));
+                int ncz = cz + (nz < 0 ? -1 : (nz >= cs ? 1 : 0));
+                int nnx = ((nx % cs) + cs) % cs;
+                int nnz = ((nz % cs) + cs) % cs;
+                var nmc = _capi!.World.BlockAccessor.GetMapChunk(ncx, ncz);
+                if (nmc == null)
                 {
-                    continue;
+                    continue; // Unknown neighbour - skip; don't force edge.
                 }
 
-                int northHeight = z > 0 ? heights[((z - 1) * edge) + x] : heights[i];
-                int delta = heights[i] - northHeight;
-                if (delta == 0)
-                {
-                    continue;
-                }
+                // For the neighbour chunk we need to look up the correct slice.
+                // Reuse the Y we already have (same height as current pixel).
+                _samplePos!.Set((ncx * cs) + nnx, y, (ncz * cs) + nnz);
+                nb = _capi.World.BlockAccessor.GetBlock(_samplePos);
+            }
 
-                float factor = delta > 0 ? 1.15f : 0.85f;
-                int p = i * 4;
-                tile[p + 0] = ClampToByte(tile[p + 0] * factor);
-                tile[p + 1] = ClampToByte(tile[p + 1] * factor);
-                tile[p + 2] = ClampToByte(tile[p + 2] * factor);
+            if (nb == null || !VanillaMapPalette.IsLake(nb))
+            {
+                return false;
             }
         }
+
+        return true;
     }
 
-    private static byte ClampToByte(float v) => v < 0f ? (byte)0 : (v > 255f ? (byte)255 : (byte)v);
+    /// <summary>
+    /// Converts a vanilla int[] BGRA pixel array to the byte[] tile format stored in
+    /// <see cref="MapTileStore"/> and used by <see cref="UploadTileToComponent"/>.
+    /// The tile format is BGRA, 4 bytes per pixel, row-major.
+    /// </summary>
+    private static byte[] IntArrayToByteTile(int[] pixels)
+    {
+        var tile = new byte[pixels.Length * 4];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            int p = pixels[i];
+            int b = i * 4;
+            tile[b + 0] = (byte)(p & 0xFF);         // B
+            tile[b + 1] = (byte)((p >> 8)  & 0xFF); // G
+            tile[b + 2] = (byte)((p >> 16) & 0xFF); // R
+            tile[b + 3] = (byte)((p >> 24) & 0xFF); // A
+        }
+
+        return tile;
+    }
 
     /// <summary>
-    /// Converts a ChunkSampler RGBA byte[] tile to int[] RGBA pixel array and
-    /// creates or updates the <see cref="MultiChunkMapComponent"/> for (cx, cz).
+    /// Creates or updates the <see cref="MultiChunkMapComponent"/> for (cx, cz) by
+    /// uploading the int[] pixel array directly. The int values are in BGRA layout
+    /// (matching what vanilla and ColorUtil produce).
     /// </summary>
-    private void UploadTileToComponent(int cx, int cz, byte[] tile)
+    private void UploadTileToComponent(int cx, int cz, int[] pixels)
     {
         if (_capi == null)
         {
             return;
-        }
-
-        // Convert byte[] RGBA (4 bytes per pixel) to int[] RGBA (1 int per pixel).
-        var pixels = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
-        for (int i = 0; i < pixels.Length; i++)
-        {
-            int b = i * 4;
-            int r = tile[b];
-            int g = tile[b + 1];
-            int bl = tile[b + 2];
-            int a = tile[b + 3];
-            pixels[i] = ColorUtil.ColorFromRgba(r, g, bl, a);
         }
 
         if (!_components.TryGetValue((cx, cz), out var comp))
@@ -396,6 +584,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
     /// <summary>
     /// Uploads all tiles from the active store to GPU components.
+    /// The stored byte[] tiles are BGRA; converted back to int[] for the component.
     /// Must be called on the main thread.
     /// </summary>
     /// <returns>Number of tiles uploaded.</returns>
@@ -415,10 +604,27 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int count = 0;
         foreach (var (key, tile) in store.AllTiles())
         {
-            UploadTileToComponent(key.Cx, key.Cz, tile);
+            var pixels = ByteTileToIntArray(tile);
+            UploadTileToComponent(key.Cx, key.Cz, pixels);
             count++;
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Converts a byte[] BGRA tile (4 bytes per pixel) to int[] BGRA pixels.
+    /// Inverse of <see cref="IntArrayToByteTile"/>.
+    /// </summary>
+    private static int[] ByteTileToIntArray(byte[] tile)
+    {
+        var pixels = new int[tile.Length / 4];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            int b = i * 4;
+            pixels[i] = tile[b] | (tile[b + 1] << 8) | (tile[b + 2] << 16) | (tile[b + 3] << 24);
+        }
+
+        return pixels;
     }
 }
