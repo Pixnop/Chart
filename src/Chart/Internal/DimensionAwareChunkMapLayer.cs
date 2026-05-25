@@ -41,10 +41,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     // Palette built once in OnLoaded.
     private readonly VanillaMapPalette _palette = new();
 
-    // Diagnostic counter: log the first few ProcessChunk calls after each swap so we can
-    // verify which dim we are actually sampling.
-    private int _diagLogCounter;
-
     // Reused BlockPos to avoid per-column allocation during sampling.
     private BlockPos? _samplePos;
 
@@ -197,7 +193,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         }
 
         _components.Clear();
-        _diagLogCounter = 0;
 
         // Drain the dirty queue so stale chunk coordinates from the old dimension do
         // not get sampled against the new dimension's block accessor data.
@@ -254,18 +249,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         // _samplePos was constructed with dim=0 - set the correct dim explicitly each call.
         int currentDim = _capi.World.Player?.Entity?.Pos.Dimension ?? 0;
         _samplePos!.dimension = currentDim;
-
-        // Diagnostic: log dim at sample time for the first chunk after a swap.
-        if (_diagLogCounter < 3)
-        {
-            _capi.Logger.Notification(
-                "[Chart] diag ProcessChunk cx={0} cz={1} playerDim={2} center-height={3}",
-                cx,
-                cz,
-                currentDim,
-                mc.RainHeightMap[16 * 32 + 16]);
-            _diagLogCounter++;
-        }
 
         int cs = _chunkSize;
         int mapSizeY = _capi.World.BlockAccessor.MapSizeY;
@@ -378,17 +361,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 {
                     continue;
                 }
-            }
-
-            // Diag: log first sample per chunk so we know which path is taken.
-            if (i == 16 * cs + 16 && _diagLogCounter <= 3)
-            {
-                byte slot = (uint)blockId < (uint)_palette.Block2Color.Length
-                    ? _palette.Block2Color[blockId]
-                    : (byte)0;
-                _capi.Logger.Notification(
-                    "[Chart] diag-sample cx={0} cz={1} firstY={2} resolvedY={3} blockId={4} blockCode={5} paletteSlot={6}",
-                    cx, cz, mc.RainHeightMap[i], y, blockId, block?.Code?.ToString() ?? "null", slot);
             }
 
             // --- Snow skip (vanilla default mode) ---

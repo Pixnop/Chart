@@ -19,6 +19,11 @@ internal static class ChunkSampler
     /// row-major 32 by 32 arrays addressed as <c>z * 32 + x</c>. <paramref name="palette"/>
     /// returns an RGBA value in the order (red, green, blue, alpha) packed in a uint as
     /// <c>0xRRGGBBAA</c>.
+    ///
+    /// NOTE: this method is no longer called by the production rendering path (replaced by
+    /// the vanilla ChunkMapLayer pipeline in DimensionAwareChunkMapLayer). Kept because the
+    /// unit tests in ChunkSamplerTests provide useful regression coverage of the constants
+    /// and the tile-format contract.
     /// </summary>
     /// <param name="heights">Top block Y per column.</param>
     /// <param name="topBlockIds">Top block id per column (0 = air / no surface).</param>

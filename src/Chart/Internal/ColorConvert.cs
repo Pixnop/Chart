@@ -13,6 +13,10 @@ internal static class ColorConvert
     /// VS stores colour as <c>(a&lt;&lt;24)|(b&lt;&lt;16)|(g&lt;&lt;8)|r</c> (low byte = R).
     /// ChunkSampler expects <c>(r&lt;&lt;24)|(g&lt;&lt;16)|(b&lt;&lt;8)|a</c>.
     /// Alpha is always forced to 0xFF (fully opaque) for map tiles.
+    ///
+    /// NOTE: no longer called by the production path (the vanilla VanillaMapPalette pipeline
+    /// replaced the old palette delegate approach). Kept because the unit tests in
+    /// DimensionAwareChunkMapLayerTests cover the byte-swapping contract.
     /// </summary>
     /// <param name="abgr">ABGR-packed int from Block.GetColor.</param>
     /// <returns>0xRRGGBBAA uint suitable for ChunkSampler.</returns>
