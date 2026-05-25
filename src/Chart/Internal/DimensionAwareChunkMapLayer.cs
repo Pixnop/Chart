@@ -333,46 +333,11 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 continue;
             }
 
-            // --- Slope / shadow factor (vanilla 3-neighbour NW, N, W) ---
-            float b = 1f;
-            int topX  = lx - 1;
-            int leftZ = lz - 1;
-            int botX  = lx;
-            int rightZ = lz;
-
-            IMapChunk leftTopMc  = mc;
-            IMapChunk rightTopMc = mc;
-            IMapChunk leftBotMc  = mc;
-
-            if (topX < 0 && leftZ < 0)
-            {
-                leftTopMc  = mcNW!;
-                rightTopMc = mcW!;
-                leftBotMc  = mcN!;
-            }
-            else
-            {
-                if (topX  < 0) { leftTopMc  = mcW!; rightTopMc = mcW!; }
-                if (leftZ < 0) { leftTopMc  = mcN!; leftBotMc  = mcN!; }
-            }
-
-            int topXMod  = GameMath.Mod(topX,  cs);
-            int leftZMod = GameMath.Mod(leftZ, cs);
-
-            int leftTop  = leftTopMc  == null ? 0 : (y - leftTopMc .RainHeightMap[(leftZMod  * cs) + topXMod]);
-            int rightTop = rightTopMc == null ? 0 : (y - rightTopMc.RainHeightMap[(rightZ    * cs) + topXMod]);
-            int leftBot  = leftBotMc  == null ? 0 : (y - leftBotMc .RainHeightMap[(leftZMod  * cs) + botX]);
-
-            float slopedir  = Math.Sign(leftTop) + Math.Sign(rightTop) + Math.Sign(leftBot);
-            float steepness = Math.Max(Math.Max(Math.Abs(leftTop), Math.Abs(rightTop)), Math.Abs(leftBot));
-
-            if (slopedir > 0f) b = 1.08f + Math.Min(0.5f, steepness / 10f) / 1.25f;
-            if (slopedir < 0f) b = 0.92f - Math.Min(0.5f, steepness / 10f) / 1.25f;
-
-            // --- Block lookup via UnpackAndReadBlock(FluidOrSolid) ---
+            // --- Block lookup first (sets usedFallback if RainHeightMap was stale) ---
             var currentSlice = chunkSlices[cy];
             int blockId;
             Block block;
+            bool usedFallback = false;
 
             if (currentSlice != null)
             {
@@ -392,6 +357,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             // Without this fallback, custom dims render empty.
             if (blockId == 0 || block == null || block.Id == 0)
             {
+                usedFallback = true;
                 _samplePos!.Set((cx * cs) + lx, 0, (cz * cs) + lz);
                 for (int yy = scanTop; yy > 0; yy--)
                 {
@@ -414,6 +380,17 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 }
             }
 
+            // Diag: log first sample per chunk so we know which path is taken.
+            if (i == 16 * cs + 16 && _diagLogCounter <= 3)
+            {
+                byte slot = (uint)blockId < (uint)_palette.Block2Color.Length
+                    ? _palette.Block2Color[blockId]
+                    : (byte)0;
+                _capi.Logger.Notification(
+                    "[Chart] diag-sample cx={0} cz={1} firstY={2} resolvedY={3} blockId={4} blockCode={5} paletteSlot={6}",
+                    cx, cz, mc.RainHeightMap[i], y, blockId, block?.Code?.ToString() ?? "null", slot);
+            }
+
             // --- Snow skip (vanilla default mode) ---
             // If the surface block is snow, peek one block lower to get the actual terrain.
             if (block.BlockMaterial == EnumBlockMaterial.Snow && y > 0)
@@ -431,6 +408,47 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                         y = yBelow;
                     }
                 }
+            }
+
+            // --- Slope / shadow factor (vanilla 3-neighbour NW, N, W) ---
+            // Skip when the fallback was used: neighbour mc.RainHeightMap is stale
+            // (overworld values in custom dims), so the slope delta would be garbage.
+            float b = 1f;
+            if (!usedFallback)
+            {
+                int topX = lx - 1;
+                int leftZ = lz - 1;
+                int botX = lx;
+                int rightZ = lz;
+
+                IMapChunk leftTopMc = mc;
+                IMapChunk rightTopMc = mc;
+                IMapChunk leftBotMc = mc;
+
+                if (topX < 0 && leftZ < 0)
+                {
+                    leftTopMc = mcNW!;
+                    rightTopMc = mcW!;
+                    leftBotMc = mcN!;
+                }
+                else
+                {
+                    if (topX < 0) { leftTopMc = mcW!; rightTopMc = mcW!; }
+                    if (leftZ < 0) { leftTopMc = mcN!; leftBotMc = mcN!; }
+                }
+
+                int topXMod = GameMath.Mod(topX, cs);
+                int leftZMod = GameMath.Mod(leftZ, cs);
+
+                int leftTop = leftTopMc == null ? 0 : (y - leftTopMc.RainHeightMap[(leftZMod * cs) + topXMod]);
+                int rightTop = rightTopMc == null ? 0 : (y - rightTopMc.RainHeightMap[(rightZ * cs) + topXMod]);
+                int leftBot = leftBotMc == null ? 0 : (y - leftBotMc.RainHeightMap[(leftZMod * cs) + botX]);
+
+                float slopedir = Math.Sign(leftTop) + Math.Sign(rightTop) + Math.Sign(leftBot);
+                float steepness = Math.Max(Math.Max(Math.Abs(leftTop), Math.Abs(rightTop)), Math.Abs(leftBot));
+
+                if (slopedir > 0f) b = 1.08f + (Math.Min(0.5f, steepness / 10f) / 1.25f);
+                if (slopedir < 0f) b = 0.92f - (Math.Min(0.5f, steepness / 10f) / 1.25f);
             }
 
             // --- Colour assignment ---
