@@ -249,8 +249,10 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int currentDim = _capi.World.Player?.Entity?.Pos.Dimension ?? 0;
         _samplePos!.dimension = currentDim;
 
-        // We compute our own per-column surface by scanning downward via BlockAccessor
-        // (now dim-aware), because IMapChunk.RainHeightMap is shared across dims.
+        // Use BlockAccessor.GetRainMapHeightAt(pos) which is O(1) and dim-aware via
+        // pos.dimension (the underlying IMapChunk is fetched in the right dim). The
+        // earlier downward scan was 256x slower and caused lag spikes on map load.
+        // If the surface is missing or returns air, we fall back to a short bounded scan.
         var heights = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
         var topBlockIds = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
         int maxY = _capi.World.BlockAccessor.MapSizeY - 1;
@@ -262,21 +264,36 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 int worldX = (cx * ChunkSampler.TileEdge) + x;
                 int worldZ = (cz * ChunkSampler.TileEdge) + z;
 
-                int foundY = 0;
+                _samplePos!.Set(worldX, 0, worldZ);
+                int y = _capi.World.BlockAccessor.GetRainMapHeightAt(_samplePos);
+
                 int foundBlockId = 0;
-                for (int y = maxY; y > 0; y--)
+                if (y > 0 && y <= maxY)
                 {
-                    _samplePos!.Set(worldX, y, worldZ);
+                    _samplePos.Set(worldX, y, worldZ);
                     var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
-                    if (block != null && block.Id != 0)
+                    foundBlockId = block?.Id ?? 0;
+
+                    // Fallback: if the heightmap pointed at air (cross-dim stale data),
+                    // scan a small window down from y to find the real surface.
+                    if (foundBlockId == 0)
                     {
-                        foundY = y;
-                        foundBlockId = block.Id;
-                        break;
+                        int lower = System.Math.Max(1, y - 64);
+                        for (int yy = y; yy >= lower; yy--)
+                        {
+                            _samplePos.Set(worldX, yy, worldZ);
+                            block = _capi.World.BlockAccessor.GetBlock(_samplePos);
+                            if (block != null && block.Id != 0)
+                            {
+                                y = yy;
+                                foundBlockId = block.Id;
+                                break;
+                            }
+                        }
                     }
                 }
 
-                heights[i] = foundY;
+                heights[i] = foundBlockId == 0 ? 0 : y;
                 topBlockIds[i] = foundBlockId;
             }
         }
@@ -300,9 +317,46 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         };
 
         var tile = ChunkSampler.Sample(heights, topBlockIds, palette);
+        ApplyHillshade(tile, heights);
         store.SetTile(cx, cz, tile);
         UploadTileToComponent(cx, cz, tile);
     }
+
+    /// <summary>
+    /// Vanilla-style relief shading: each column is brightened or darkened relative to
+    /// the column to the north (z-1). Higher than the neighbour gets +15 percent, lower
+    /// gets -15 percent. Produces the 3D topographic look the vanilla map has.
+    /// </summary>
+    private static void ApplyHillshade(byte[] tile, int[] heights)
+    {
+        const int edge = ChunkSampler.TileEdge;
+        for (int z = 0; z < edge; z++)
+        {
+            for (int x = 0; x < edge; x++)
+            {
+                int i = (z * edge) + x;
+                if (heights[i] == 0)
+                {
+                    continue;
+                }
+
+                int northHeight = z > 0 ? heights[((z - 1) * edge) + x] : heights[i];
+                int delta = heights[i] - northHeight;
+                if (delta == 0)
+                {
+                    continue;
+                }
+
+                float factor = delta > 0 ? 1.15f : 0.85f;
+                int p = i * 4;
+                tile[p + 0] = ClampToByte(tile[p + 0] * factor);
+                tile[p + 1] = ClampToByte(tile[p + 1] * factor);
+                tile[p + 2] = ClampToByte(tile[p + 2] * factor);
+            }
+        }
+    }
+
+    private static byte ClampToByte(float v) => v < 0f ? (byte)0 : (v > 255f ? (byte)255 : (byte)v);
 
     /// <summary>
     /// Converts a ChunkSampler RGBA byte[] tile to int[] RGBA pixel array and
