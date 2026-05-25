@@ -242,34 +242,37 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             _diagLogCounter++;
         }
 
-        // Build height array (int[] as ChunkSampler requires).
-        var rainHeight = mc.RainHeightMap;
+        // IMapChunk.RainHeightMap appears to NOT be dimension-aware in Manifold custom dims
+        // (it returns the overworld surface even when the player is in dim 11). We compute
+        // our own per-column surface by scanning downward via BlockAccessor (which IS
+        // dim-aware via the player's current dim), so the heights match the dim we are in.
         var heights = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
-        for (int i = 0; i < heights.Length; i++)
-        {
-            heights[i] = rainHeight[i];
-        }
-
-        // Build top-block-id array: for each column read the block at the rain height.
         var topBlockIds = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
+        int maxY = _capi.World.BlockAccessor.MapSizeY - 1;
         for (int z = 0; z < ChunkSampler.TileEdge; z++)
         {
             for (int x = 0; x < ChunkSampler.TileEdge; x++)
             {
                 int i = (z * ChunkSampler.TileEdge) + x;
                 int worldX = (cx * ChunkSampler.TileEdge) + x;
-                int worldY = heights[i];
                 int worldZ = (cz * ChunkSampler.TileEdge) + z;
 
-                if (worldY <= 0)
+                int foundY = 0;
+                int foundBlockId = 0;
+                for (int y = maxY; y > 0; y--)
                 {
-                    topBlockIds[i] = 0;
-                    continue;
+                    _samplePos!.Set(worldX, y, worldZ);
+                    var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
+                    if (block != null && block.Id != 0)
+                    {
+                        foundY = y;
+                        foundBlockId = block.Id;
+                        break;
+                    }
                 }
 
-                _samplePos!.Set(worldX, worldY, worldZ);
-                var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
-                topBlockIds[i] = block?.Id ?? 0;
+                heights[i] = foundY;
+                topBlockIds[i] = foundBlockId;
             }
         }
 
