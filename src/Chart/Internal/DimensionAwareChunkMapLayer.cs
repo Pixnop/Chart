@@ -447,8 +447,11 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 float slopedir = Math.Sign(leftTop) + Math.Sign(rightTop) + Math.Sign(leftBot);
                 float steepness = Math.Max(Math.Max(Math.Abs(leftTop), Math.Abs(rightTop)), Math.Abs(leftBot));
 
-                if (slopedir > 0f) b = 1.08f + (Math.Min(0.5f, steepness / 10f) / 1.25f);
-                if (slopedir < 0f) b = 0.92f - (Math.Min(0.5f, steepness / 10f) / 1.25f);
+                // Softened from vanilla (cap 0.5 / div 10) because our tiles are 32x32 and
+                // not 96x96 like vanilla, so cross-chunk discrepancies show more.
+                float magnitude = Math.Min(0.3f, steepness / 12f) / 1.25f;
+                if (slopedir > 0f) b = 1.08f + magnitude;
+                if (slopedir < 0f) b = 0.92f - magnitude;
             }
 
             // --- Colour assignment ---
@@ -473,8 +476,10 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         var rawShadow = new byte[shadowMap.Length];
         Array.Copy(shadowMap, rawShadow, shadowMap.Length);
 
-        // Box-blur the shadow map with radius 2 over the 32x32 tile.
-        BlurTool.Blur(shadowMap, cs, cs, 2);
+        // Box-blur the shadow map with radius 1. Vanilla uses radius 2 but operates on
+        // 3x3-grouped 96x96 tiles where the blur stays inside one big tile; our tiles
+        // are 32x32 so a larger blur creates visible seams at chunk boundaries.
+        BlurTool.Blur(shadowMap, cs, cs, 1);
 
         // Combine blurred and raw shadows and apply to each pixel colour.
         for (int i = 0; i < pixCount; i++)
@@ -492,6 +497,15 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         var tile = IntArrayToByteTile(tintedImage);
         store.SetTile(cx, cz, tile);
         UploadTileToComponent(cx, cz, tintedImage);
+
+        // Re-enqueue the 4 cardinal neighbours so their edges resample using our
+        // now-loaded mc.RainHeightMap. Reduces visible seams at chunk boundaries
+        // when chunks load in a staggered order. Only re-enqueue chunks already
+        // rendered (in _components) to avoid expanding the working set unbounded.
+        if (_components.ContainsKey((cx - 1, cz))) _dirtyQueue.Enqueue((cx - 1, cz));
+        if (_components.ContainsKey((cx + 1, cz))) _dirtyQueue.Enqueue((cx + 1, cz));
+        if (_components.ContainsKey((cx, cz - 1))) _dirtyQueue.Enqueue((cx, cz - 1));
+        if (_components.ContainsKey((cx, cz + 1))) _dirtyQueue.Enqueue((cx, cz + 1));
     }
 
     /// <summary>
