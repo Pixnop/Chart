@@ -271,12 +271,14 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int mapSizeY = _capi.World.BlockAccessor.MapSizeY;
         int numChunkSlices = mapSizeY / cs;
 
-        // Prefetch all vertical chunk slices (vanilla pattern).
-        // Bail if any slice is null or not yet received from the server.
+        // Prefetch all vertical chunk slices (vanilla pattern). VS encodes the dimension
+        // into chunk Y as `cy + dim * 1024`, so we must offset here or we read the
+        // overworld's slice even when the player is in a custom dim.
         var chunkSlices = new IWorldChunk[numChunkSlices];
+        int dimChunkYOffset = currentDim * 1024;
         for (int cy = 0; cy < numChunkSlices; cy++)
         {
-            var slice = _capi.World.BlockAccessor.GetChunk(cx, cy, cz);
+            var slice = _capi.World.BlockAccessor.GetChunk(cx, cy + dimChunkYOffset, cz);
             if (slice == null || !(slice is IClientChunk clientSlice && clientSlice.LoadedFromServer))
             {
                 // Some slices can legitimately be null for very tall worlds above build height;
