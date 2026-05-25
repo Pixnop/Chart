@@ -249,13 +249,16 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int currentDim = _capi.World.Player?.Entity?.Pos.Dimension ?? 0;
         _samplePos!.dimension = currentDim;
 
-        // Use BlockAccessor.GetRainMapHeightAt(pos) which is O(1) and dim-aware via
-        // pos.dimension (the underlying IMapChunk is fetched in the right dim). The
-        // earlier downward scan was 256x slower and caused lag spikes on map load.
-        // If the surface is missing or returns air, we fall back to a short bounded scan.
+        // Step 1: try BlockAccessor.GetRainMapHeightAt - O(1) when the dim's heightmap
+        // is populated (vanilla overworld dim is fine here).
+        // Step 2: if it returns 0 or points at air (custom Manifold dims don't always
+        // populate the IMapChunk heightmap), fall back to a bounded scan around the
+        // player's current Y - cheap and dim-correct since _samplePos carries the dim.
         var heights = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
         var topBlockIds = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
         int maxY = _capi.World.BlockAccessor.MapSizeY - 1;
+        int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
+        int scanTop = System.Math.Min(maxY, playerY + 64);
         for (int z = 0; z < ChunkSampler.TileEdge; z++)
         {
             for (int x = 0; x < ChunkSampler.TileEdge; x++)
@@ -273,22 +276,21 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                     _samplePos.Set(worldX, y, worldZ);
                     var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
                     foundBlockId = block?.Id ?? 0;
+                }
 
-                    // Fallback: if the heightmap pointed at air (cross-dim stale data),
-                    // scan a small window down from y to find the real surface.
-                    if (foundBlockId == 0)
+                // Fallback scan when the heightmap returned nothing or pointed at air.
+                // Scan a window around the player's Y, which is dim-correct.
+                if (foundBlockId == 0)
+                {
+                    for (int yy = scanTop; yy > 0; yy--)
                     {
-                        int lower = System.Math.Max(1, y - 64);
-                        for (int yy = y; yy >= lower; yy--)
+                        _samplePos.Set(worldX, yy, worldZ);
+                        var block = _capi.World.BlockAccessor.GetBlock(_samplePos);
+                        if (block != null && block.Id != 0)
                         {
-                            _samplePos.Set(worldX, yy, worldZ);
-                            block = _capi.World.BlockAccessor.GetBlock(_samplePos);
-                            if (block != null && block.Id != 0)
-                            {
-                                y = yy;
-                                foundBlockId = block.Id;
-                                break;
-                            }
+                            y = yy;
+                            foundBlockId = block.Id;
+                            break;
                         }
                     }
                 }
