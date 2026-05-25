@@ -242,10 +242,15 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             _diagLogCounter++;
         }
 
-        // IMapChunk.RainHeightMap appears to NOT be dimension-aware in Manifold custom dims
-        // (it returns the overworld surface even when the player is in dim 11). We compute
-        // our own per-column surface by scanning downward via BlockAccessor (which IS
-        // dim-aware via the player's current dim), so the heights match the dim we are in.
+        // BlockAccessor.GetBlock(BlockPos) reads from the BlockPos's `dimension` field, NOT
+        // from the player's current dimension. _samplePos was constructed with dim=0 and our
+        // Set(x,y,z) overload does not touch the dim. We must set it explicitly each call
+        // so the sample reads from the dim the player is actually in.
+        int currentDim = _capi.World.Player?.Entity?.Pos.Dimension ?? 0;
+        _samplePos!.dimension = currentDim;
+
+        // We compute our own per-column surface by scanning downward via BlockAccessor
+        // (now dim-aware), because IMapChunk.RainHeightMap is shared across dims.
         var heights = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
         var topBlockIds = new int[ChunkSampler.TileEdge * ChunkSampler.TileEdge];
         int maxY = _capi.World.BlockAccessor.MapSizeY - 1;
