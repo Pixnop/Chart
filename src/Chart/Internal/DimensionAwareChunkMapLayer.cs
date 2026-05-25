@@ -167,6 +167,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// </summary>
     public void OnActiveStoreSwapped()
     {
+        int before = _components.Count;
         foreach (var comp in _components.Values)
         {
             comp.ActuallyDispose();
@@ -176,12 +177,18 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         // Drain the dirty queue so stale chunk coordinates from the old dimension do
         // not get sampled against the new dimension's block accessor data.
+        int drained = 0;
         while (_dirtyQueue.TryDequeue(out _))
         {
+            drained++;
         }
 
         var tiles = UploadAllStoredTiles();
-        _capi?.Logger.Notification("[Chart] swapped active store, repainted {0} tiles.", tiles);
+        _capi?.Logger.Notification(
+            "[Chart] swapped active store: cleared {0} components, drained {1} dirty entries, repainted {2} tiles.",
+            before,
+            drained,
+            tiles);
     }
 
     private void OnChunkDirty(Vec3i chunkCoord, IWorldChunk chunk, EnumChunkDirtyReason reason)

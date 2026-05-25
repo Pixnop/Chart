@@ -70,8 +70,10 @@ public sealed class ChartModSystem : ModSystem
             if (vanilla is not null)
             {
                 vanilla.Active = false;
+                bool removed = mapManager.MapLayers.Remove(vanilla);
                 api.Logger.Notification(
-                    "[Chart] Deactivated vanilla ChunkMapLayer (type={0}).",
+                    "[Chart] Vanilla ChunkMapLayer Active=false, Removed={0} (type={1}).",
+                    removed,
                     vanilla.GetType().FullName);
             }
             else
