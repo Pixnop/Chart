@@ -31,6 +31,10 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     // callback (any thread) and drained on the main thread in OnTick.
     private readonly ConcurrentQueue<(int Cx, int Cz)> _dirtyQueue = new();
 
+    // Diagnostic counter: log the first few ProcessChunk calls after each swap so we can
+    // verify which dim we are actually sampling (player dim vs tracker's expected dim).
+    private int _diagLogCounter;
+
     // Reused BlockPos to avoid per-column allocation during sampling.
     private BlockPos? _samplePos;
 
@@ -174,6 +178,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         }
 
         _components.Clear();
+        _diagLogCounter = 0;
 
         // Drain the dirty queue so stale chunk coordinates from the old dimension do
         // not get sampled against the new dimension's block accessor data.
@@ -223,6 +228,18 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         if (store == null)
         {
             return;
+        }
+
+        // Diagnostic: log dim at sample time for the first chunk after a swap. _diagLogCounter resets on swap.
+        if (_diagLogCounter < 3)
+        {
+            int dimAtSample = -1;
+            try { dimAtSample = _capi.World.Player?.Entity?.Pos.Dimension ?? -1; }
+            catch { dimAtSample = -2; }
+            _capi.Logger.Notification(
+                "[Chart] diag ProcessChunk cx={0} cz={1} playerDim={2} center-height={3}",
+                cx, cz, dimAtSample, mc.RainHeightMap[16 * 32 + 16]);
+            _diagLogCounter++;
         }
 
         // Build height array (int[] as ChunkSampler requires).
