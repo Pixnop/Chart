@@ -97,6 +97,36 @@ internal sealed class PerDimensionMapStore : IDisposable
             _active.Count);
     }
 
+    /// <summary>
+    /// Deletes the on-disk tile cache for <paramref name="dimCode"/>. If the deleted dim is the
+    /// currently active one, also resets the in-memory store and clears the active dim code so
+    /// the next <see cref="LoadFor"/> reloads from scratch. Use when the owning Manifold dimension
+    /// is destroyed (typically an ephemeral dim) and its cached tiles are no longer wanted.
+    /// </summary>
+    /// <param name="dimCode">Dimension code whose cache should be wiped.</param>
+    public void DeleteFor(string dimCode)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(dimCode);
+
+        if (_activeDimCode == dimCode)
+        {
+            _active = new MapTileStore();
+            _activeDimCode = string.Empty;
+        }
+
+        var path = DimensionMapPath.Compose(_root, _savegameId, dimCode);
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        File.Delete(path);
+        _capi.Logger.Notification(
+            "[Chart] Deleted dim '{0}' cache at '{1}'.",
+            dimCode,
+            path);
+    }
+
     /// <inheritdoc/>
     public void Dispose()
     {

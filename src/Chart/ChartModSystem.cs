@@ -1,5 +1,6 @@
 using System.Linq;
 using Chart.Internal;
+using Manifold.Api.Helpers;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.GameContent;
@@ -44,6 +45,27 @@ public sealed class ChartModSystem : ModSystem
         };
 
         _tracker.Start();
+
+        // Drop the on-disk tile cache and in-memory tiles when an owning Manifold dimension is
+        // destroyed (typically an ephemeral dim). Keeps disk + VRAM bounded over long sessions.
+        // If the destroyed dim is the one the player is currently in, also clear the GPU
+        // components so the map does not show stale tiles for a dimension that no longer exists.
+        var manifoldClient = ManifoldAccess.GetClient(api);
+        if (manifoldClient is not null)
+        {
+            manifoldClient.Destroyed += (_, e) =>
+            {
+                string dimCode = e.Dimension.Code.ToString();
+                bool wasActive = _store.CurrentDimCode == dimCode;
+                _store.DeleteFor(dimCode);
+
+                if (wasActive)
+                {
+                    _layer ??= FindLayer(api);
+                    _layer?.OnActiveStoreSwapped();
+                }
+            };
+        }
 
         var mapManager = api.ModLoader.GetModSystem<WorldMapManager>();
 
