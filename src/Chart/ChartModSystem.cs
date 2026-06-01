@@ -102,6 +102,23 @@ public sealed class ChartModSystem : ModSystem
             {
                 api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
             }
+
+            // Startup orphan scan: drop .bin caches for dimensions that no longer exist in the
+            // client mirror. Defends against ephemeral dims whose Destroyed event did not reach
+            // the client last session (server crash, ungraceful disconnect, or an older Manifold
+            // without the shutdown cleanup). By LevelFinalize the manifest mirror has been
+            // populated by the server's ManifestSnapshotPacket, so its dim list is authoritative.
+            if (manifoldClient is not null && _store is not null)
+            {
+                var knownCodes = manifoldClient.Dimensions.Select(d => d.Code.ToString());
+                int orphans = _store.DeleteOrphans(knownCodes);
+                if (orphans > 0)
+                {
+                    api.Logger.Notification(
+                        "[Chart] Startup orphan scan: deleted {0} stale dim cache file(s).",
+                        orphans);
+                }
+            }
         };
     }
 

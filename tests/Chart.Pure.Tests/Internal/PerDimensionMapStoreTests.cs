@@ -77,6 +77,59 @@ public sealed class PerDimensionMapStoreTests
         Assert.False(File.Exists(tmp.PathFor("mymod:never-saved")));
     }
 
+    [Fact]
+    public void DeleteOrphans_Removes_Files_Whose_Dim_Is_Not_Known()
+    {
+        using var tmp = new TempDataRoot();
+        var store = new PerDimensionMapStore(tmp.Capi);
+
+        // Three bin files on disk for three different dims.
+        foreach (var dim in new[] { "mymod:kept", "mymod:orphan_a", "mymod:orphan_b" })
+        {
+            store.LoadFor(dim);
+            store.Active.SetTile(0, 0, new byte[16]);
+            store.SaveCurrent();
+        }
+
+        Assert.True(File.Exists(tmp.PathFor("mymod:kept")));
+        Assert.True(File.Exists(tmp.PathFor("mymod:orphan_a")));
+        Assert.True(File.Exists(tmp.PathFor("mymod:orphan_b")));
+
+        int deleted = store.DeleteOrphans(new[] { "mymod:kept" });
+
+        Assert.Equal(2, deleted);
+        Assert.True(File.Exists(tmp.PathFor("mymod:kept")));
+        Assert.False(File.Exists(tmp.PathFor("mymod:orphan_a")));
+        Assert.False(File.Exists(tmp.PathFor("mymod:orphan_b")));
+    }
+
+    [Fact]
+    public void DeleteOrphans_Returns_Zero_When_All_Files_Match_Known_Dims()
+    {
+        using var tmp = new TempDataRoot();
+        var store = new PerDimensionMapStore(tmp.Capi);
+        store.LoadFor("mymod:dimA");
+        store.Active.SetTile(0, 0, new byte[16]);
+        store.SaveCurrent();
+
+        int deleted = store.DeleteOrphans(new[] { "mymod:dimA", "manifold:overworld" });
+
+        Assert.Equal(0, deleted);
+        Assert.True(File.Exists(tmp.PathFor("mymod:dimA")));
+    }
+
+    [Fact]
+    public void DeleteOrphans_Returns_Zero_When_Cache_Dir_Does_Not_Exist()
+    {
+        using var tmp = new TempDataRoot();
+        var store = new PerDimensionMapStore(tmp.Capi);
+
+        // No LoadFor / SaveCurrent ever called, so the savegame subdir never gets created.
+        int deleted = store.DeleteOrphans(new[] { "anything" });
+
+        Assert.Equal(0, deleted);
+    }
+
     private sealed class TempDataRoot : IDisposable
     {
         public TempDataRoot()
