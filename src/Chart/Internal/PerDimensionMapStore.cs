@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Vintagestory.API.Client;
 
@@ -95,6 +96,84 @@ internal sealed class PerDimensionMapStore : IDisposable
             _activeDimCode,
             path,
             _active.Count);
+    }
+
+    /// <summary>
+    /// Deletes the on-disk tile cache for <paramref name="dimCode"/>. If the deleted dim is the
+    /// currently active one, also resets the in-memory store and clears the active dim code so
+    /// the next <see cref="LoadFor"/> reloads from scratch. Use when the owning Manifold dimension
+    /// is destroyed (typically an ephemeral dim) and its cached tiles are no longer wanted.
+    /// </summary>
+    /// <param name="dimCode">Dimension code whose cache should be wiped.</param>
+    public void DeleteFor(string dimCode)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(dimCode);
+
+        if (_activeDimCode == dimCode)
+        {
+            _active = new MapTileStore();
+            _activeDimCode = string.Empty;
+        }
+
+        var path = DimensionMapPath.Compose(_root, _savegameId, dimCode);
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        File.Delete(path);
+        _capi.Logger.Notification(
+            "[Chart] Deleted dim '{0}' cache at '{1}'.",
+            dimCode,
+            path);
+    }
+
+    /// <summary>
+    /// Scans the savegame's cache directory and deletes every <c>.bin</c> tile file whose owning
+    /// dimension is not in <paramref name="knownDimCodes"/>. Used at startup to drop ephemeral-dim
+    /// caches left behind when the previous session ended without firing a <c>Destroyed</c> event
+    /// (server crash, ungraceful disconnect, version where shutdown cleanup is absent).
+    /// </summary>
+    /// <param name="knownDimCodes">Current Manifold dimension codes (typically <c>IManifoldClient.Dimensions.Select(d =&gt; d.Code.ToString())</c>).</param>
+    /// <returns>Number of orphan files deleted.</returns>
+    public int DeleteOrphans(IEnumerable<string> knownDimCodes)
+    {
+        ArgumentNullException.ThrowIfNull(knownDimCodes);
+
+        var saveDir = Path.Combine(_root, _savegameId);
+        if (!Directory.Exists(saveDir))
+        {
+            return 0;
+        }
+
+        // Compute the expected filename for each known dim. Comparing by filename rather than by
+        // decoding the filename back to a dim code avoids the lossy nature of the
+        // ':' / '/' -> '_' substitution in DimensionMapPath.Compose.
+        var knownFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var code in knownDimCodes)
+        {
+            if (string.IsNullOrEmpty(code))
+            {
+                continue;
+            }
+
+            knownFiles.Add(Path.GetFileName(DimensionMapPath.Compose(_root, _savegameId, code)));
+        }
+
+        int deleted = 0;
+        foreach (var file in Directory.GetFiles(saveDir, "*.bin"))
+        {
+            if (knownFiles.Contains(Path.GetFileName(file)))
+            {
+                continue;
+            }
+
+            File.Delete(file);
+            _capi.Logger.Notification("[Chart] Deleted orphan cache '{0}'.", file);
+            deleted++;
+        }
+
+        return deleted;
     }
 
     /// <inheritdoc/>

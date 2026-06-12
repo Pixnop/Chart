@@ -2,13 +2,13 @@
   "type": "code",
   "modid": "chart",
   "name": "Chart",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Dimension-aware world map for Manifold custom dimensions. Companion to Manifold. Alpha-stage client-side mod; expect visual rough edges (chunk-edge seams, softened hillshade vs vanilla).",
   "authors": ["Pixnop"],
   "side": "Client",
   "dependencies": {
     "game": "",
     "survival": "",
-    "manifold": "0.3.1"
+    "manifold": "0.4.1"
   }
 }

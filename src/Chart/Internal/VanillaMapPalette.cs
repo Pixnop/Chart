@@ -16,7 +16,6 @@ internal sealed class VanillaMapPalette
     // ---------- Palette colour codes and hex values ----------
     // Source: ChunkMapLayer.hexColorsByCode (public static field, VSEssentials).
     // 13 named codes. Order matches the OrderedDictionary so that palette indices are stable.
-
     private static readonly string[] PaletteCodes =
     {
         "ink",          // 0
@@ -53,22 +52,21 @@ internal sealed class VanillaMapPalette
 
     // ---------- Material -> code fallback table ----------
     // Source: ChunkMapLayer.defaultMapColorCodes (public static field, VSEssentials).
-
     private static readonly Dictionary<EnumBlockMaterial, string> DefaultMaterialCodes =
         new()
         {
-            { EnumBlockMaterial.Soil,   "land"    },
-            { EnumBlockMaterial.Sand,   "desert"  },
-            { EnumBlockMaterial.Ore,    "land"    },
-            { EnumBlockMaterial.Gravel, "desert"  },
-            { EnumBlockMaterial.Stone,  "land"    },
-            { EnumBlockMaterial.Leaves, "forest"  },
-            { EnumBlockMaterial.Plant,  "plant"   },
-            { EnumBlockMaterial.Wood,   "forest"  },
-            { EnumBlockMaterial.Snow,   "glacier" },
-            { EnumBlockMaterial.Water,  "lake"    },
-            { EnumBlockMaterial.Ice,    "glacier" },
-            { EnumBlockMaterial.Lava,   "lava"    },
+            { EnumBlockMaterial.Soil, "land" },
+            { EnumBlockMaterial.Sand, "desert" },
+            { EnumBlockMaterial.Ore, "land" },
+            { EnumBlockMaterial.Gravel, "desert" },
+            { EnumBlockMaterial.Stone, "land" },
+            { EnumBlockMaterial.Leaves, "forest" },
+            { EnumBlockMaterial.Plant, "plant" },
+            { EnumBlockMaterial.Wood, "forest" },
+            { EnumBlockMaterial.Snow, "glacier" },
+            { EnumBlockMaterial.Water, "lake" },
+            { EnumBlockMaterial.Ice, "glacier" },
+            { EnumBlockMaterial.Lava, "lava" },
         };
 
     // ---------- Runtime lookups ----------
@@ -122,18 +120,9 @@ internal sealed class VanillaMapPalette
             string code = "land";
             if (block?.Attributes != null)
             {
-                code = block.Attributes["mapColorCode"].AsString();
-                if (code == null)
-                {
-                    if (!DefaultMaterialCodes.TryGetValue(block.BlockMaterial, out string? matCode))
-                    {
-                        code = "land";
-                    }
-                    else
-                    {
-                        code = matCode;
-                    }
-                }
+                string? mapCode = block.Attributes["mapColorCode"].AsString();
+                code = mapCode
+                    ?? (DefaultMaterialCodes.TryGetValue(block.BlockMaterial, out string? matCode) ? matCode : "land");
             }
 
             Block2Color[id] = (byte)(codeToIndex.TryGetValue(code, out int idx) ? idx : codeToIndex["land"]);
