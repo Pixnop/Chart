@@ -38,6 +38,11 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     // callback (any thread) and drained on the main thread in OnTick.
     private readonly ConcurrentQueue<(int Cx, int Cz)> _dirtyQueue = new();
 
+    // Dedup set for _dirtyQueue. ChunkDirty fires once per vertical slice (16-48 per column
+    // load), and without dedup each duplicate entry costs a full re-render - ruinous in custom
+    // dims where every pixel takes the vertical fallback scan. Value is unused.
+    private readonly ConcurrentDictionary<(int Cx, int Cz), byte> _queued = new();
+
     // Palette built once in OnLoaded.
     private readonly VanillaMapPalette _palette = new();
 
@@ -124,7 +129,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         // Queue newly visible chunks for (re-)generation.
         foreach (var v in nowVisible)
         {
-            _dirtyQueue.Enqueue((v.X, v.Y));
+            EnqueueDirty(v.X, v.Y);
         }
     }
 
@@ -142,6 +147,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int processed = 0;
         while (processed < maxPerTick && _dirtyQueue.TryDequeue(out var coord))
         {
+            _queued.TryRemove(coord, out _);
             ProcessChunk(coord.Cx, coord.Cz);
             processed++;
         }
@@ -202,6 +208,8 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             drained++;
         }
 
+        _queued.Clear();
+
         var tiles = UploadAllStoredTiles();
         _capi?.Logger.Notification(
             "[Chart] swapped active store: cleared {0} components, drained {1} dirty entries, repainted {2} tiles.",
@@ -216,8 +224,21 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             reason == EnumChunkDirtyReason.MarkedDirty)
         {
             // chunkCoord.X/Z are chunk coordinates; Y is the vertical slice index.
-            // Multiple vertical slices fire per column - deduplicated at ProcessChunk time.
-            _dirtyQueue.Enqueue((chunkCoord.X, chunkCoord.Z));
+            // Multiple vertical slices fire per column - EnqueueDirty dedups them.
+            EnqueueDirty(chunkCoord.X, chunkCoord.Z);
+        }
+    }
+
+    /// <summary>
+    /// Enqueues a chunk column for (re-)sampling unless it is already pending. The dedup
+    /// matters: ChunkDirty fires once per vertical slice (16-48 per column load) and each
+    /// duplicate would cost a full re-render.
+    /// </summary>
+    private void EnqueueDirty(int cx, int cz)
+    {
+        if (_queued.TryAdd((cx, cz), 0))
+        {
+            _dirtyQueue.Enqueue((cx, cz));
         }
     }
 
@@ -296,9 +317,18 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         var tile = IntArrayToByteTile(tintedImage);
         store.SetTile(cx, cz, tile);
-        UploadTileToComponent(cx, cz, tintedImage);
 
-        ReEnqueueCardinalNeighbours(cx, cz);
+        // Only on the FIRST render of this column do we nudge already-rendered neighbours to
+        // resample their edges against our now-loaded heightmap. Re-enqueueing on every render
+        // created an endless ping-pong (A re-renders B, B re-renders A, ...) that kept the
+        // dirty queue saturated and, in custom dims where every pixel takes the vertical
+        // fallback scan, pegged the client CPU.
+        bool isFirstRender = !_components.ContainsKey((cx, cz));
+        UploadTileToComponent(cx, cz, tintedImage);
+        if (isFirstRender)
+        {
+            ReEnqueueCardinalNeighbours(cx, cz);
+        }
     }
 
     /// <summary>
@@ -566,22 +596,22 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     {
         if (_components.ContainsKey((cx - 1, cz)))
         {
-            _dirtyQueue.Enqueue((cx - 1, cz));
+            EnqueueDirty(cx - 1, cz);
         }
 
         if (_components.ContainsKey((cx + 1, cz)))
         {
-            _dirtyQueue.Enqueue((cx + 1, cz));
+            EnqueueDirty(cx + 1, cz);
         }
 
         if (_components.ContainsKey((cx, cz - 1)))
         {
-            _dirtyQueue.Enqueue((cx, cz - 1));
+            EnqueueDirty(cx, cz - 1);
         }
 
         if (_components.ContainsKey((cx, cz + 1)))
         {
-            _dirtyQueue.Enqueue((cx, cz + 1));
+            EnqueueDirty(cx, cz + 1);
         }
     }
 
