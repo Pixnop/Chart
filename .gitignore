@@ -1,0 +1,60 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDEs
+.vs/
+.idea/
+.vscode/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local
+
+# Claude-related artifacts (NEVER versioned)
+.claude/
+CLAUDE.md
+claude.md
+AGENTS.md
+docs/feasibility-spike.md
+docs/specs/
+docs/plans/
+docs/wiki/
+docs/notes/
+
+# Test outputs
+TestResults/
+*.trx
+coverage.opencover.xml
+*.coverage
+
+# NuGet
+*.nupkg
+.nuget/
+packages/
+
+# Mod DB packaging
+*.zip
+release/
+
+# Local Mod DB / Discord / GitHub-reply submission helpers (not part of the repo)
+MODDB.md
+DISCORD.md
+GITHUB-REPLIES.md
+*-logo-480.png
+
+# DocFX
+docfx/_site/
+docfx/api/
+docfx/obj/
+docfx-tool/

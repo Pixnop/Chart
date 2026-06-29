@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\companions\Chart\Chart.csproj" />
+    <ProjectReference Include="..\..\src\Chart\Chart.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,9 +22,15 @@
       <HintPath>$(VINTAGE_STORY)\Mods\VSEssentials.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <ProjectReference Include="..\..\src\Manifold\Manifold.csproj">
-      <Private>false</Private>
-    </ProjectReference>
+    <!--
+      Manifold is consumed as the published NuGet package, not a ProjectReference:
+      this repo is standalone and dogfoods Manifold's public API surface.
+      ExcludeAssets=runtime keeps Manifold.dll out of Chart's build output / mod zip;
+      at runtime the Manifold mod (see modinfo.json dependencies) provides it.
+    -->
+    <PackageReference Include="Pixnop.Manifold" Version="0.4.1">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>
