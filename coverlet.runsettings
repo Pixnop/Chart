@@ -5,7 +5,7 @@
       <DataCollector friendlyName="XPlat code coverage">
         <Configuration>
           <Format>opencover</Format>
-          <Exclude>[xunit.*]*,[*.Tests]*,[ManifoldSample]*</Exclude>
+          <Exclude>[xunit.*]*,[*.Tests]*</Exclude>
         </Configuration>
       </DataCollector>
     </DataCollectors>

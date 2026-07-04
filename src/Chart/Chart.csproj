@@ -42,4 +42,27 @@
     </None>
   </ItemGroup>
 
+  <!--
+    Builds the Mod DB release zip (dll + modinfo + modicon, no game or Manifold dlls).
+    Usage: dotnet build src/Chart/Chart.csproj -c Release -t:PackMod
+    Output: release/Chart-<version>.zip at the repo root (same naming as published releases).
+  -->
+  <Target Name="PackMod" DependsOnTargets="Build">
+    <PropertyGroup>
+      <ModStageDir>$(BaseIntermediateOutputPath)modzip/</ModStageDir>
+      <ModReleaseDir>$(MSBuildThisFileDirectory)../../release/</ModReleaseDir>
+      <ModZipPath>$(ModReleaseDir)Chart-$(Version).zip</ModZipPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <ModZipFile Include="$(TargetDir)Chart.dll" />
+      <ModZipFile Include="$(TargetDir)modinfo.json" />
+      <ModZipFile Include="$(TargetDir)modicon.png" />
+    </ItemGroup>
+    <RemoveDir Directories="$(ModStageDir)" />
+    <Copy SourceFiles="@(ModZipFile)" DestinationFolder="$(ModStageDir)" />
+    <MakeDir Directories="$(ModReleaseDir)" />
+    <ZipDirectory SourceDirectory="$(ModStageDir)" DestinationFile="$(ModZipPath)" Overwrite="true" />
+    <Message Importance="high" Text="Packed mod zip: $(ModZipPath)" />
+  </Target>
+
 </Project>
