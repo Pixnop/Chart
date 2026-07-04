@@ -1,0 +1,13 @@
+{
+  "type": "code",
+  "modid": "chartfixture",
+  "name": "Chart Atlas Fixture",
+  "version": "0.1.0",
+  "description": "Test fixture pinning the engine and Manifold assumptions Chart's client renderer relies on.",
+  "authors": ["Pixnop"],
+  "side": "Server",
+  "dependencies": {
+    "game": "",
+    "manifold": ""
+  }
+}
