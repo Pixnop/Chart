@@ -1,5 +1,6 @@
 using System.Linq;
 using Chart.Internal;
+using Manifold.Api.Client;
 using Manifold.Api.Helpers;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -59,18 +60,7 @@ public sealed class ChartModSystem : ModSystem
         var manifoldClient = ManifoldAccess.GetClient(api);
         if (manifoldClient is not null)
         {
-            manifoldClient.Destroyed += (_, e) =>
-            {
-                string dimCode = e.Dimension.Code.ToString();
-                bool wasActive = _store.CurrentDimCode == dimCode;
-                _store.DeleteFor(dimCode);
-
-                if (wasActive)
-                {
-                    _layer ??= FindLayer<DimensionAwareChunkMapLayer>(api);
-                    _layer?.OnActiveStoreSwapped();
-                }
-            };
+            manifoldClient.Destroyed += (_, e) => OnDimensionDestroyed(api, e.Dimension.Code.ToString());
         }
 
         var mapManager = api.ModLoader.GetModSystem<WorldMapManager>();
@@ -79,11 +69,11 @@ public sealed class ChartModSystem : ModSystem
         mapManager.RegisterMapLayer<DimensionAwareChunkMapLayer>("chart", 0.5);
         api.Logger.Notification("[Chart] Registered DimensionAwareChunkMapLayer.");
 
-        // Replace the vanilla waypoint layer TYPE under its own "waypoints" code, before
-        // WorldMapManager instantiates layers at LevelFinalize. RegisterMapLayer is a plain
-        // dictionary assignment, so the vanilla WaypointMapLayer is never created client-side;
-        // the server keeps the vanilla layer and its data still routes to ours (the "waypoints"
-        // code resolves to whatever type the client registry holds).
+        // Replace the vanilla waypoint layer TYPE under its own "waypoints" code before
+        // WorldMapManager instantiates layers at LevelFinalize. Re-registering overwrites the
+        // registry entry, so the vanilla WaypointMapLayer is never created client-side, while
+        // the server keeps the vanilla layer and its data still routes to ours through the
+        // shared "waypoints" code.
         mapManager.RegisterMapLayer<DimensionAwareWaypointMapLayer>("waypoints", 1.0);
         api.Logger.Notification("[Chart] Registered DimensionAwareWaypointMapLayer (replaces vanilla waypoints layer).");
 
@@ -91,58 +81,80 @@ public sealed class ChartModSystem : ModSystem
         // StartClientSide complete, so the MapLayers collection is empty at this point.
         // Defer the enumeration + vanilla-hide to LevelFinalize, which fires once the world
         // is fully loaded and every MapLayer (ours included) has been instantiated.
-        api.Event.LevelFinalize += () =>
+        api.Event.LevelFinalize += () => OnLevelFinalize(api, mapManager, manifoldClient);
+    }
+
+    /// <summary>
+    /// Handles a Manifold dimension being destroyed: wipes its tile cache and, when it was
+    /// the active dimension, clears the GPU components so the map shows no stale tiles.
+    /// </summary>
+    private void OnDimensionDestroyed(ICoreClientAPI api, string dimCode)
+    {
+        bool wasActive = _store!.CurrentDimCode == dimCode;
+        _store.DeleteFor(dimCode);
+
+        if (wasActive)
         {
-            foreach (var layer in mapManager.MapLayers)
+            _layer ??= FindLayer<DimensionAwareChunkMapLayer>(api);
+            _layer?.OnActiveStoreSwapped();
+        }
+    }
+
+    /// <summary>
+    /// LevelFinalize work: hides the vanilla terrain layer, verifies the waypoint layer
+    /// replacement won, and runs the startup orphan-cache scan.
+    /// </summary>
+    private void OnLevelFinalize(ICoreClientAPI api, WorldMapManager mapManager, IManifoldClient? manifoldClient)
+    {
+        foreach (var layer in mapManager.MapLayers)
+        {
+            api.Logger.Notification(
+                "[Chart] MapLayer present: {0} code={1}",
+                layer.GetType().FullName,
+                layer.LayerGroupCode);
+        }
+
+        var vanilla = mapManager.MapLayers.FirstOrDefault(
+            l => l.GetType().Name == "ChunkMapLayer");
+        if (vanilla is not null)
+        {
+            vanilla.Active = false;
+            bool removed = mapManager.MapLayers.Remove(vanilla);
+            api.Logger.Notification(
+                "[Chart] Vanilla ChunkMapLayer Active=false, Removed={0} (type={1}).",
+                removed,
+                vanilla.GetType().FullName);
+        }
+        else
+        {
+            api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
+        }
+
+        // The waypoint layer is replaced by type re-registration rather than removal, so
+        // just verify it won: another mod re-registering "waypoints" after us would put
+        // the cross-dim pin bleed back without this trace.
+        if (FindLayer<DimensionAwareWaypointMapLayer>(api) is null)
+        {
+            api.Logger.Warning(
+                "[Chart] DimensionAwareWaypointMapLayer was not instantiated - another mod likely re-registered the 'waypoints' layer. Waypoint pins will not be dimension-filtered.");
+        }
+
+        // Startup orphan scan: drop .bin caches for dimensions that no longer exist in the
+        // client mirror. Defends against ephemeral dims whose Destroyed event did not reach
+        // the client last session (server crash, ungraceful disconnect, or an older Manifold
+        // without the shutdown cleanup). By LevelFinalize the manifest mirror has been
+        // populated by the server's ManifestSnapshotPacket, so its dim list is authoritative.
+        if (manifoldClient is not null && _store is not null)
+        {
+            var knownCodes = manifoldClient.Dimensions.Select(d => d.Code.ToString());
+            int orphans = _store.DeleteOrphans(knownCodes);
+            if (orphans > 0)
             {
                 api.Logger.Notification(
-                    "[Chart] MapLayer present: {0} code={1}",
-                    layer.GetType().FullName,
-                    layer.LayerGroupCode);
+                    "[Chart] Startup orphan scan: deleted {0} stale dim cache file(s).",
+                    orphans);
             }
-
-            var vanilla = mapManager.MapLayers.FirstOrDefault(
-                l => l.GetType().Name == "ChunkMapLayer");
-            if (vanilla is not null)
-            {
-                vanilla.Active = false;
-                bool removed = mapManager.MapLayers.Remove(vanilla);
-                api.Logger.Notification(
-                    "[Chart] Vanilla ChunkMapLayer Active=false, Removed={0} (type={1}).",
-                    removed,
-                    vanilla.GetType().FullName);
-            }
-            else
-            {
-                api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
-            }
-
-            // The waypoint layer is replaced by type re-registration rather than removal, so
-            // just verify it won: another mod re-registering "waypoints" after us would put
-            // the cross-dim pin bleed back without this trace.
-            if (FindLayer<DimensionAwareWaypointMapLayer>(api) is null)
-            {
-                api.Logger.Warning(
-                    "[Chart] DimensionAwareWaypointMapLayer was not instantiated - another mod likely re-registered the 'waypoints' layer. Waypoint pins will not be dimension-filtered.");
-            }
-
-            // Startup orphan scan: drop .bin caches for dimensions that no longer exist in the
-            // client mirror. Defends against ephemeral dims whose Destroyed event did not reach
-            // the client last session (server crash, ungraceful disconnect, or an older Manifold
-            // without the shutdown cleanup). By LevelFinalize the manifest mirror has been
-            // populated by the server's ManifestSnapshotPacket, so its dim list is authoritative.
-            if (manifoldClient is not null && _store is not null)
-            {
-                var knownCodes = manifoldClient.Dimensions.Select(d => d.Code.ToString());
-                int orphans = _store.DeleteOrphans(knownCodes);
-                if (orphans > 0)
-                {
-                    api.Logger.Notification(
-                        "[Chart] Startup orphan scan: deleted {0} stale dim cache file(s).",
-                        orphans);
-                }
-            }
-        };
+        }
     }
 
     /// <inheritdoc/>
