@@ -4,5 +4,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Chart.Pure.Tests/Chart.Pure.Tests.csproj" />
+    <Project Path="tests/Chart.Scenarios/Chart.Scenarios.csproj" />
+    <Project Path="tests/Chart.Scenarios.FixtureMod/Chart.Scenarios.FixtureMod.csproj" />
   </Folder>
 </Solution>

@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);CS1591;SA0001;SA1600;SA1601;SA1602</NoWarn>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- The Manifold mod under test is the published release artifact, not a source build:
+         these scenarios pin the real runtime combination players install. -->
+    <ManifoldModVersion>0.4.1</ManifoldModVersion>
+    <ManifoldModZipUrl>https://github.com/Pixnop/Manifold/releases/download/v$(ManifoldModVersion)/Manifold-$(ManifoldModVersion).zip</ManifoldModZipUrl>
+    <ManifoldModZipCache>$(BaseIntermediateOutputPath)Manifold-$(ManifoldModVersion).zip</ManifoldModZipCache>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <!-- 2.9.3 to match the xunit.extensibility.execution pin of Pixnop.Atlas.XUnit. -->
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Pixnop.Atlas.XUnit" Version="0.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Private=true (default): the runner JITs scenario bodies that use game types
+         (BlockPos) before Atlas installs its AssemblyResolve hook, so the dll must
+         sit next to the test assembly. -->
+    <Reference Include="VintagestoryAPI">
+      <HintPath>$(VINTAGE_STORY)\VintagestoryAPI.dll</HintPath>
+    </Reference>
+    <!-- Mod under test staging: the fixture is assembled into a folder mod by
+         StageAtlasFolderMods below; the Manifold release zip is staged by
+         StageManifoldReleaseZip and declared via the AtlasMods attribute
+         (see AssemblyInfo.cs). Scenario code must NOT touch Manifold types at
+         runtime - the ModLoader loads its own copy of Manifold.dll (different
+         assembly identity, statics not shared); interact through world state,
+         commands, and ICoreServerAPI only. -->
+    <ProjectReference Include="..\Chart.Scenarios.FixtureMod\Chart.Scenarios.FixtureMod.csproj">
+      <AtlasMod>true</AtlasMod>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!-- Atlas's AtlasMod sugar stages the referenced project's TargetPath (the bare dll).
+       The fixture carries no assembly-level ModInfo attribute - the ModLoader discovers
+       it through modinfo.json - so the bare dll is rejected. Assemble one folder mod per
+       tagged reference (dll + modinfo.json) and rewrite the generated manifest to point
+       at those folders. See Pixnop/Atlas issue 22. -->
+  <Target Name="StageAtlasFolderMods" AfterTargets="WriteAtlasModManifest" Condition="'$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_AtlasFolderModDll Include="@(_ResolvedProjectReferencePaths)" Condition="'%(_ResolvedProjectReferencePaths.AtlasMod)' == 'true'">
+        <StageDir>$(TargetDir)atlas-mods\%(Filename)</StageDir>
+        <ModInfoPath>%(RootDir)%(Directory)modinfo.json</ModInfoPath>
+      </_AtlasFolderModDll>
+    </ItemGroup>
+    <Copy SourceFiles="@(_AtlasFolderModDll)" DestinationFolder="%(_AtlasFolderModDll.StageDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_AtlasFolderModDll->'%(ModInfoPath)')" DestinationFolder="%(_AtlasFolderModDll.StageDir)" SkipUnchangedFiles="true" />
+    <WriteLinesToFile File="$(TargetDir)atlas-mods.generated.txt"
+                      Lines="@(_AtlasFolderModDll->'%(StageDir)')"
+                      Overwrite="true" />
+  </Target>
+
+  <!-- Downloads the published Manifold release zip once (cached under obj/) and stages
+       it next to the test assembly under a version-independent name; AssemblyInfo.cs
+       declares it to Atlas via [assembly: AtlasMods("atlas-mods/manifold.zip")]. -->
+  <Target Name="StageManifoldReleaseZip" AfterTargets="Build" Condition="'$(TargetFramework)' != ''">
+    <DownloadFile SourceUrl="$(ManifoldModZipUrl)"
+                  DestinationFolder="$(BaseIntermediateOutputPath)"
+                  DestinationFileName="Manifold-$(ManifoldModVersion).zip"
+                  Condition="!Exists('$(ManifoldModZipCache)')" />
+    <Copy SourceFiles="$(ManifoldModZipCache)"
+          DestinationFiles="$(TargetDir)atlas-mods\manifold.zip"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

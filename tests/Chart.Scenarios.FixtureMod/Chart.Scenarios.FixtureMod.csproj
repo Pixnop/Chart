@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>ChartFixture</AssemblyName>
+    <RootNamespace>ChartFixture</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);CS1591;SA0001;SA1600;SA1601;SA1602</NoWarn>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- No test-framework reference here (this is a staged mod, not a test assembly), so
+         SonarCloud would classify it as production code and fail the new-code coverage
+         gate. It is test tooling, exercised end to end by Chart.Scenarios. -->
+    <SonarQubeTestProject>true</SonarQubeTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Private=false / ExcludeAssets=runtime on both: at runtime the ModLoader provides
+         VintagestoryAPI, and the staged manifold mod (the published release zip) provides
+         Manifold.dll; bundling copies would split assembly identities. -->
+    <Reference Include="VintagestoryAPI">
+      <HintPath>$(VINTAGE_STORY)\VintagestoryAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <PackageReference Include="Pixnop.Manifold" Version="0.4.1">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="modinfo.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
