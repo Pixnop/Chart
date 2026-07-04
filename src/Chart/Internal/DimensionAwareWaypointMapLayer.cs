@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
 using Vintagestory.API.Client;
@@ -31,6 +32,10 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
     // Temporary waypoints (AddTemporaryWaypoint is public but not virtual) land in the
     // base's private list; read it via reflection so third-party callers still get
     // their temporary pins rendered. Null when the field disappears in a game update.
+    [SuppressMessage(
+        "Major Code Smell",
+        "S3011:Reflection should not be used to increase accessibility of classes, methods, or fields",
+        Justification = "Read-only peek at the base layer's private temporary-pin list; the base offers no accessible alternative and a missing field degrades gracefully to an empty list.")]
     private static readonly FieldInfo? TmpComponentsField = typeof(WaypointMapLayer)
         .GetField("tmpWayPointComponents", BindingFlags.Instance | BindingFlags.NonPublic);
 
@@ -62,13 +67,9 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
         RebuildFilteredComponents();
     }
 
-    /// <inheritdoc/>
-    public override void OnMapClosedClient()
-    {
-        // The base clears its temporary-waypoint bookkeeping; our own components are
-        // rebuilt on every open anyway.
-        base.OnMapClosedClient();
-    }
+    // OnMapClosedClient is intentionally NOT overridden: the base clears its
+    // temporary-waypoint bookkeeping there, and our own components are rebuilt on
+    // every map open anyway.
 
     /// <inheritdoc/>
     public override void Render(GuiElementMap mapElem, float dt)
