@@ -10,6 +10,11 @@ namespace Chart.Pure.Tests.Internal;
 
 public sealed class PerDimensionMapStoreTests
 {
+    // CA1861: constant array arguments hoisted to static readonly fields.
+    private static readonly string[] KeptDimOnly = { "mymod:kept" };
+    private static readonly string[] KnownDims = { "mymod:dimA", "manifold:overworld" };
+    private static readonly string[] AnyDim = { "anything" };
+
     [Fact]
     public void DeleteFor_Removes_The_Bin_File_For_The_Given_Dim()
     {
@@ -95,7 +100,7 @@ public sealed class PerDimensionMapStoreTests
         Assert.True(File.Exists(tmp.PathFor("mymod:orphan_a")));
         Assert.True(File.Exists(tmp.PathFor("mymod:orphan_b")));
 
-        int deleted = store.DeleteOrphans(new[] { "mymod:kept" });
+        int deleted = store.DeleteOrphans(KeptDimOnly);
 
         Assert.Equal(2, deleted);
         Assert.True(File.Exists(tmp.PathFor("mymod:kept")));
@@ -112,7 +117,7 @@ public sealed class PerDimensionMapStoreTests
         store.Active.SetTile(0, 0, new byte[16]);
         store.SaveCurrent();
 
-        int deleted = store.DeleteOrphans(new[] { "mymod:dimA", "manifold:overworld" });
+        int deleted = store.DeleteOrphans(KnownDims);
 
         Assert.Equal(0, deleted);
         Assert.True(File.Exists(tmp.PathFor("mymod:dimA")));
@@ -125,7 +130,7 @@ public sealed class PerDimensionMapStoreTests
         var store = new PerDimensionMapStore(tmp.Capi);
 
         // No LoadFor / SaveCurrent ever called, so the savegame subdir never gets created.
-        int deleted = store.DeleteOrphans(new[] { "anything" });
+        int deleted = store.DeleteOrphans(AnyDim);
 
         Assert.Equal(0, deleted);
     }
