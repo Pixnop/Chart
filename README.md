@@ -50,6 +50,18 @@ the game. CI (GitHub Actions) builds, runs the tests with coverage and feeds the
 to [SonarCloud](https://sonarcloud.io/summary/new_code?id=Pixnop_Chart) on every push and
 pull request.
 
+## E2E scenarios
+
+```
+dotnet test tests/Chart.Scenarios
+```
+
+Boots a headless Vintage Story server through [Atlas](https://github.com/Pixnop/Atlas),
+with the published Manifold release zip staged as a real mod, and pins the engine and
+Manifold contracts Chart's renderer is built on (RainHeightMap fallback, dim-encoded
+chunk slice reads, dimension destroy events). Chart itself is a client-only mod and does
+not load in that server; rendering is validated visually in game.
+
 ## Package
 
 ```
