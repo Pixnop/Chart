@@ -18,6 +18,9 @@ public sealed class ChartModSystem : ModSystem
     // Null until the WorldMapManager instantiates the layer via Activator.CreateInstance.
     private DimensionAwareChunkMapLayer? _layer;
 
+    // Cached reference to the waypoint layer so OnStoreSwapped can refilter pins.
+    private DimensionAwareWaypointMapLayer? _waypointLayer;
+
     /// <summary>
     /// The tile store for the dimension the local player is currently in.
     /// Returns null until the first dimension swap or StartClientSide completes.
@@ -36,12 +39,15 @@ public sealed class ChartModSystem : ModSystem
         _store = new PerDimensionMapStore(api);
         _tracker = new DimensionTracker(api, _store);
 
-        // Wire the dim-swap callback: look up the layer from WorldMapManager and notify it.
+        // Wire the dim-swap callback: look up the layers from WorldMapManager and notify them.
         _tracker.OnStoreSwapped = () =>
         {
-            // Lazily resolve the layer reference after WorldMapManager has instantiated it.
-            _layer ??= FindLayer(api);
+            // Lazily resolve the layer references after WorldMapManager has instantiated them.
+            _layer ??= FindLayer<DimensionAwareChunkMapLayer>(api);
             _layer?.OnActiveStoreSwapped();
+
+            _waypointLayer ??= FindLayer<DimensionAwareWaypointMapLayer>(api);
+            _waypointLayer?.OnPlayerDimensionChanged();
         };
 
         _tracker.Start();
@@ -61,7 +67,7 @@ public sealed class ChartModSystem : ModSystem
 
                 if (wasActive)
                 {
-                    _layer ??= FindLayer(api);
+                    _layer ??= FindLayer<DimensionAwareChunkMapLayer>(api);
                     _layer?.OnActiveStoreSwapped();
                 }
             };
@@ -72,6 +78,14 @@ public sealed class ChartModSystem : ModSystem
         // Position 0.5 places this layer between the terrain layer (0.0) and marker layers (1.0).
         mapManager.RegisterMapLayer<DimensionAwareChunkMapLayer>("chart", 0.5);
         api.Logger.Notification("[Chart] Registered DimensionAwareChunkMapLayer.");
+
+        // Replace the vanilla waypoint layer TYPE under its own "waypoints" code, before
+        // WorldMapManager instantiates layers at LevelFinalize. RegisterMapLayer is a plain
+        // dictionary assignment, so the vanilla WaypointMapLayer is never created client-side;
+        // the server keeps the vanilla layer and its data still routes to ours (the "waypoints"
+        // code resolves to whatever type the client registry holds).
+        mapManager.RegisterMapLayer<DimensionAwareWaypointMapLayer>("waypoints", 1.0);
+        api.Logger.Notification("[Chart] Registered DimensionAwareWaypointMapLayer (replaces vanilla waypoints layer).");
 
         // The vanilla MapLayers are instantiated by WorldMapManager AFTER all ModSystems'
         // StartClientSide complete, so the MapLayers collection is empty at this point.
@@ -103,6 +117,15 @@ public sealed class ChartModSystem : ModSystem
                 api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
             }
 
+            // The waypoint layer is replaced by type re-registration rather than removal, so
+            // just verify it won: another mod re-registering "waypoints" after us would put
+            // the cross-dim pin bleed back without this trace.
+            if (FindLayer<DimensionAwareWaypointMapLayer>(api) is null)
+            {
+                api.Logger.Warning(
+                    "[Chart] DimensionAwareWaypointMapLayer was not instantiated - another mod likely re-registered the 'waypoints' layer. Waypoint pins will not be dimension-filtered.");
+            }
+
             // Startup orphan scan: drop .bin caches for dimensions that no longer exist in the
             // client mirror. Defends against ephemeral dims whose Destroyed event did not reach
             // the client last session (server crash, ungraceful disconnect, or an older Manifold
@@ -131,11 +154,12 @@ public sealed class ChartModSystem : ModSystem
     }
 
     /// <summary>
-    /// Finds the <see cref="DimensionAwareChunkMapLayer"/> instance that WorldMapManager
-    /// created via Activator.CreateInstance. Returns null if the map manager or layer
-    /// are not yet available.
+    /// Finds the Chart-owned map layer instance of type <typeparamref name="T"/> that
+    /// WorldMapManager created via Activator.CreateInstance. Returns null if the map
+    /// manager or layer are not yet available.
     /// </summary>
-    private static DimensionAwareChunkMapLayer? FindLayer(ICoreClientAPI capi)
+    private static T? FindLayer<T>(ICoreClientAPI capi)
+        where T : MapLayer
     {
         var wmm = capi.ModLoader.GetModSystem<WorldMapManager>();
         if (wmm?.MapLayers == null)
@@ -145,7 +169,7 @@ public sealed class ChartModSystem : ModSystem
 
         foreach (var layer in wmm.MapLayers)
         {
-            if (layer is DimensionAwareChunkMapLayer chartLayer)
+            if (layer is T chartLayer)
             {
                 return chartLayer;
             }
