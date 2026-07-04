@@ -67,7 +67,7 @@ jobs:
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
             /d:sonar.scanner.scanAll=false \
-            /d:sonar.coverage.exclusions="**/ChartModSystem.cs,**/DimensionAwareChunkMapLayer.cs,**/DimensionTracker.cs,**/EntityPosAccess.cs,**/VanillaMapPalette.cs"
+            /d:sonar.coverage.exclusions="**/ChartModSystem.cs,**/DimensionAwareChunkMapLayer.cs,**/DimensionAwareWaypointMapLayer.cs,**/DimensionTracker.cs,**/EntityPosAccess.cs,**/VanillaMapPalette.cs"
 
       - name: Build
         run: dotnet build Chart.slnx -c Release
