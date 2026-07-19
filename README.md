@@ -74,8 +74,10 @@ and `modicon.png` only; the game and Manifold dlls are provided at runtime).
 ## Layout
 
 ```
-src/Chart/              the mod (ChartModSystem + Internal/)
-tests/Chart.Pure.Tests/ unit tests
+src/Chart/                        the mod (ChartModSystem + Internal/)
+tests/Chart.Pure.Tests/           unit tests
+tests/Chart.Scenarios/            Atlas E2E scenario suite
+tests/Chart.Scenarios.FixtureMod/ server-side fixture mod staged by the scenarios
 ```
 
 ## License
