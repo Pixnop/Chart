@@ -23,9 +23,9 @@
     <!-- MSB3277: cross-version System.* unification noise; VS DLL is compiled against a different runtime ref. -->
     <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
 
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
-    <FileVersion>0.2.0.0</FileVersion>
-    <Version>0.2.0</Version>
+    <AssemblyVersion>0.3.0.0</AssemblyVersion>
+    <FileVersion>0.3.0.0</FileVersion>
+    <Version>0.3.0</Version>
 
     <Authors>Pixnop</Authors>
     <Product>Chart</Product>
