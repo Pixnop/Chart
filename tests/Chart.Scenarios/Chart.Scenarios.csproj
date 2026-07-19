@@ -16,7 +16,7 @@
     <!-- 2.9.3 to match the xunit.extensibility.execution pin of Pixnop.Atlas.XUnit. -->
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageReference Include="Pixnop.Atlas.XUnit" Version="0.7.0" />
+    <PackageReference Include="Pixnop.Atlas.XUnit" Version="0.11.0" />
   </ItemGroup>
 
   <ItemGroup>
