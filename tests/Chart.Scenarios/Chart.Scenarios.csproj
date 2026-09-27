@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- The Manifold mod under test is the published release artifact, not a source build:
          these scenarios pin the real runtime combination players install. -->
-    <ManifoldModVersion>0.4.1</ManifoldModVersion>
+    <ManifoldModVersion>0.5.0</ManifoldModVersion>
     <ManifoldModZipUrl>https://github.com/Pixnop/Manifold/releases/download/v$(ManifoldModVersion)/Manifold-$(ManifoldModVersion).zip</ManifoldModZipUrl>
     <ManifoldModZipCache>$(BaseIntermediateOutputPath)Manifold-$(ManifoldModVersion).zip</ManifoldModZipCache>
   </PropertyGroup>
@@ -16,7 +16,7 @@
     <!-- 2.9.3 to match the xunit.extensibility.execution pin of Pixnop.Atlas.XUnit. -->
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageReference Include="Pixnop.Atlas.XUnit" Version="0.11.0" />
+    <PackageReference Include="Pixnop.Atlas.XUnit" Version="0.15.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,6 +25,11 @@
          sit next to the test assembly. -->
     <Reference Include="VintagestoryAPI">
       <HintPath>$(VINTAGE_STORY)\VintagestoryAPI.dll</HintPath>
+    </Reference>
+    <!-- The world map's channel packets (MapLayerUpdate) and the Waypoint list they carry,
+         decoded from what the server sends a joined player. -->
+    <Reference Include="VSEssentials">
+      <HintPath>$(VINTAGE_STORY)\Mods\VSEssentials.dll</HintPath>
     </Reference>
     <!-- Mod under test staging: since Atlas 0.5 the AtlasMod sugar stages the fixture's
          output folder as a folder mod natively (modinfo.json sits next to the built dll,
@@ -37,6 +42,9 @@
     <ProjectReference Include="..\Chart.Scenarios.FixtureMod\Chart.Scenarios.FixtureMod.csproj">
       <AtlasMod>true</AtlasMod>
     </ProjectReference>
+    <!-- Chart itself is client-only and is not staged as a mod; the waypoint scenarios call
+         its pure dimension filter (WaypointDimension) on the list the server really sends. -->
+    <ProjectReference Include="..\..\src\Chart\Chart.csproj" />
   </ItemGroup>
 
   <!-- Downloads the published Manifold release zip once (cached under obj/) and stages

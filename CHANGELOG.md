@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Waypoint filter scenarios.** Two Atlas scenarios have a real player create pins with `/waypoint add` in the overworld and in a Manifold dimension, capture the waypoint list the server sends that player, and run Chart's `WaypointDimension` over it: each pin shows only in its own dimension, and removing the pin visible on a dimension map by the index Chart keeps deletes that pin, not the overworld one. The client-side layer swap and the rendering stay untested (Atlas has no client).
+
+### Changed
+- The scenario suite runs on Atlas 0.15.0 against the Manifold 0.5.0 release.
+
 ## [0.3.0] - 2026-07-19
 
 ### Added
