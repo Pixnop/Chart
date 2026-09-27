@@ -4,6 +4,7 @@ using System.Text;
 using Manifold.Api;
 using Manifold.Api.Helpers;
 using Manifold.Api.Server;
+using Manifold.Api.Transitions;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
@@ -125,7 +126,33 @@ public sealed class ChartFixtureModSystem : ModSystem
             .BeginSubCommand("pregen")
                 .WithArgs(parsers.Word("dimpath"), parsers.Int("x"), parsers.Int("z"))
                 .HandleWith(OnPregen)
+            .EndSubCommand()
+            .BeginSubCommand("send")
+                .WithArgs(parsers.Word("player"), parsers.Word("dimpath"))
+                .HandleWith(OnSend)
             .EndSubCommand();
+    }
+
+    /// <summary>
+    /// Sends an online player to a fixture dimension's fixed spawn, the way a portal or a
+    /// transit command would; scenarios then act as that player from inside the dimension.
+    /// </summary>
+    private TextCommandResult OnSend(TextCommandCallingArgs args)
+    {
+        var name = (string)args[0];
+        var player = _sapi.World.AllOnlinePlayers
+            .OfType<IServerPlayer>()
+            .FirstOrDefault(p => p.PlayerName == name);
+        if (player is null)
+        {
+            return TextCommandResult.Error($"no online player named {name}");
+        }
+
+        _manifold.Transitions.TeleportPlayer(
+            player,
+            new AssetLocation(Domain, (string)args[1]),
+            new TransitionOptions { SpawnBehavior = SpawnBehavior.DimensionSpawn });
+        return TextCommandResult.Success("sent");
     }
 
     /// <summary>
