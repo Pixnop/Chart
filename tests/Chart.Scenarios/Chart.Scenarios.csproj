@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <IsPackable>false</IsPackable>
-    <NoWarn>$(NoWarn);CS1591;SA0001;SA1600;SA1601;SA1602</NoWarn>
+    <NoWarn>$(NoWarn);CS1591;SA0001;SA1600;SA1601;SA1602;SA1402;SA1649</NoWarn>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- The Manifold mod under test is the published release artifact, not a source build:
          these scenarios pin the real runtime combination players install. -->
@@ -30,6 +30,10 @@
          decoded from what the server sends a joined player. -->
     <Reference Include="VSEssentials">
       <HintPath>$(VINTAGE_STORY)\Mods\VSEssentials.dll</HintPath>
+    </Reference>
+    <!-- ProtoContract, for the scenario's copies of Manifold's mirror packets (ManifoldMirrorPackets.cs). -->
+    <Reference Include="protobuf-net">
+      <HintPath>$(VINTAGE_STORY)\Lib\protobuf-net.dll</HintPath>
     </Reference>
     <!-- Mod under test staging: since Atlas 0.5 the AtlasMod sugar stages the fixture's
          output folder as a folder mod natively (modinfo.json sits next to the built dll,
