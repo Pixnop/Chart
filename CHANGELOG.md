@@ -8,13 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Cavern maps for roofed dimensions.** A dimension's owner mod can declare where the map's surface scan starts with the `chart:scanTopY` metadata (an integer Y, set through Manifold's `WithMetadata`). Chart steps through the ceiling the scan starts in and draws the floor under it, so a roofed dimension shows its caverns instead of a uniform roof; a column solid all the way down is drawn as a wall. The hint needs Manifold 0.6.0 or later on the server, which is when metadata started reaching clients. `chartScanTopY`, the key Rift Traveler already ships, is read as well.
+- **Cavern maps for roofed dimensions.** A dimension's owner mod can declare where the map's surface scan starts with the `chart:scanTopY` metadata (an integer Y, set through Manifold's `WithMetadata`). Chart steps through the ceiling the scan starts in and draws the floor under it, so a roofed dimension shows its caverns instead of a uniform roof; a column solid all the way down is drawn as a wall. `chartScanTopY`, the key Rift Traveler already ships, is read as well.
+- **Relief shading in custom dimensions.** The vanilla hillshade compares a pixel with its neighbours in the height map, which Chart cannot use outside the overworld, so custom dimensions were drawn flat. The same shading is now computed from the heights the column scan finds, including across tile edges.
 
 ### Fixed
 - **Solid custom dimensions were mapped from the overworld's height map.** Map chunks are not per dimension, so the height Chart read first was the overworld's surface at the same X/Z. In a void or skyblock dimension that height is air and the scan took over, which hid the problem; in a dimension filled with rock it landed on an arbitrary block inside the terrain or on its roof, and that block was drawn as the surface. Chart no longer reads the height map outside the overworld: custom dimensions are always scanned.
 
 ### Changed
-- The scenarios run against the Manifold 0.6.0 release, with a roofed fixture dimension that Chart's own scan is run over. Chart still works with Manifold 0.4.1 or later.
+- **Requires Manifold 0.6.0 or later**, the first release that sends dimension metadata to clients; the scan hint above travels that way.
+- The scenarios run against the Manifold 0.6.0 release, with a roofed fixture dimension that Chart's own scan is run over, and assert that the hint is in the manifest a joining player receives.
+- Atlas test harness bumped to 0.16.0-rc.1.
 
 ## [0.3.0] - 2026-09-27
 

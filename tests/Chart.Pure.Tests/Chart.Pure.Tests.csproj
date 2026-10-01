@@ -12,7 +12,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="NSubstitute" Version="5.1.0" />
     <!-- Chart excludes Manifold's runtime asset (the game provides it); the tests need the dll. -->
-    <PackageReference Include="Pixnop.Manifold" Version="0.4.1" />
+    <PackageReference Include="Pixnop.Manifold" Version="0.6.0" />
     <PackageReference Include="coverlet.collector" Version="6.0.2">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
