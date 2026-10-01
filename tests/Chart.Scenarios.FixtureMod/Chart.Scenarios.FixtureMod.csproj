@@ -20,7 +20,7 @@
       <HintPath>$(VINTAGE_STORY)\VintagestoryAPI.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <PackageReference Include="Pixnop.Manifold" Version="0.5.0">
+    <PackageReference Include="Pixnop.Manifold" Version="0.6.0">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
   </ItemGroup>

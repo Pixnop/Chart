@@ -2,6 +2,7 @@ namespace Chart.Scenarios;
 
 using Atlas.Api;
 using Atlas.XUnit;
+using Chart.Internal;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
 using Xunit;
@@ -24,13 +25,17 @@ public class ChartAssumptionScenarios : ChartScenarioBase
     private const int ProbeZ = 512;
     private const int SlabTopY = 4;
 
+    // The fixture's CavernWorldgen: the slab's floor, plus a roof at y 20..22; the dimension
+    // declares its scan top inside that roof.
+    private const int CavernRoofTopY = 22;
+    private const int CavernDeclaredScanTop = 21;
+
     /// <summary>
-    /// DimensionAwareChunkMapLayer.TrySamplePixel trusts RainHeightMap only when the
-    /// block at that height is solid, and falls back to a bounded top-down scan
-    /// otherwise, because Manifold custom dims do not maintain the heightmap. In an
-    /// all-air dimension no height can point at a solid block, so if this read ever
-    /// returns solid, per-dim heightmaps have appeared and Chart's fallback (plus its
-    /// skip-hillshade-on-fallback rule) must be revisited.
+    /// DimensionAwareChunkMapLayer never reads RainHeightMap outside the overworld, because
+    /// map chunks are not per dimension: the height it holds is the overworld's surface at the
+    /// same X/Z. In an all-air dimension no height can point at a solid block, so if this read
+    /// ever returns solid, per-dimension height maps have appeared and Chart could use them
+    /// (and bring hillshade back) instead of scanning every column.
     /// </summary>
     [AtlasScenario]
     public async Task RainHeightMap_Should_PointAtAir_When_ReadInVoidDimension()
@@ -85,6 +90,27 @@ public class ChartAssumptionScenarios : ChartScenarioBase
 
         int graniteId = World.Api.World.GetBlock(new AssetLocation("game", "rock-granite"))!.BlockId;
         Assert.Equal(graniteId, blockId);
+    }
+
+    /// <summary>
+    /// In a roofed dimension a scan from above stops on the roof, so the owner mod declares a
+    /// scan top (the "chart:scanTopY" metadata) and Chart steps through the ceiling it starts
+    /// in. Run Chart's own scan over the real blocks of the fixture's cavern dimension: without
+    /// the hint it finds the roof, with it the floor.
+    /// </summary>
+    [AtlasScenario]
+    public async Task SurfaceScan_Should_FindTheFloorUnderTheRoof_When_StartedInsideTheCeiling()
+    {
+        int dimId = await DimensionId("cavern");
+        var probe = new BlockPos(ProbeX, CavernRoofTopY, ProbeZ, dimId);
+        await World.Until(
+            () => World.BlockAt(probe).Code?.ToString() == "game:rock-granite",
+            timeoutTicks: 1200);
+
+        int IdAt(int y) => World.BlockAt(new BlockPos(ProbeX, y, ProbeZ, dimId)).Id;
+
+        Assert.Equal(CavernRoofTopY, SurfaceScan.Find(IdAt, scanTop: 64, skipCeiling: false));
+        Assert.Equal(SlabTopY, SurfaceScan.Find(IdAt, CavernDeclaredScanTop, skipCeiling: true));
     }
 
     /// <summary>

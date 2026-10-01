@@ -27,6 +27,25 @@ surface the same way any third-party mod would.
 | modid (runtime)  | chart     |
 | Mod DB display   | Chart     |
 
+## For dimension authors
+
+Chart needs nothing from your mod: any Manifold dimension gets its own map. One hint is worth
+setting if your dimension has a roof. The map draws the first block it meets scanning down, so
+a roofed dimension shows its roof. Declare where the scan starts and Chart steps through the
+ceiling it starts in, then draws the cavern floor:
+
+```csharp
+manifold.Registry.Define(code)
+    // ...
+    .WithMetadata("chart:scanTopY", 112) // your ceiling, or any Y inside or just under it
+    .RegisterStatic();
+```
+
+The value is an integer Y. A column that is solid from that Y all the way down is drawn as a
+wall. The hint reaches clients through Manifold's metadata replication, so it needs Manifold
+0.6.0 or later on the server; with an older Manifold the dimension is mapped as if it had no
+hint. `chartScanTopY`, the key Rift Traveler shipped first, is read too.
+
 ## Build
 
 Requires the .NET 10 SDK and a Vintage Story install. Set the `VINTAGE_STORY` environment
@@ -58,8 +77,8 @@ dotnet test tests/Chart.Scenarios
 
 Boots a headless Vintage Story server through [Atlas](https://github.com/Pixnop/Atlas),
 with the published Manifold release zip staged as a real mod, and pins the engine and
-Manifold contracts Chart's renderer is built on (RainHeightMap fallback, dim-encoded
-chunk slice reads, dimension destroy events). Chart itself is a client-only mod and does
+Manifold contracts Chart's renderer is built on (the overworld-only RainHeightMap, dim-encoded
+chunk slice reads, the cavern scan over a real roofed dimension, dimension destroy events). Chart itself is a client-only mod and does
 not load in that server; rendering is validated visually in game.
 
 ## Package

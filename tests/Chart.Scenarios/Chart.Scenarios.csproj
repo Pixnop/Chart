@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- The Manifold mod under test is the published release artifact, not a source build:
          these scenarios pin the real runtime combination players install. -->
-    <ManifoldModVersion>0.5.0</ManifoldModVersion>
+    <ManifoldModVersion>0.6.0</ManifoldModVersion>
     <ManifoldModZipUrl>https://github.com/Pixnop/Manifold/releases/download/v$(ManifoldModVersion)/Manifold-$(ManifoldModVersion).zip</ManifoldModZipUrl>
     <ManifoldModZipCache>$(BaseIntermediateOutputPath)Manifold-$(ManifoldModVersion).zip</ManifoldModZipCache>
   </PropertyGroup>

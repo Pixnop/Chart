@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cavern maps for roofed dimensions.** A dimension's owner mod can declare where the map's surface scan starts with the `chart:scanTopY` metadata (an integer Y, set through Manifold's `WithMetadata`). Chart steps through the ceiling the scan starts in and draws the floor under it, so a roofed dimension shows its caverns instead of a uniform roof; a column solid all the way down is drawn as a wall. The hint needs Manifold 0.6.0 or later on the server, which is when metadata started reaching clients. `chartScanTopY`, the key Rift Traveler already ships, is read as well.
+
+### Fixed
+- **Solid custom dimensions were mapped from the overworld's height map.** Map chunks are not per dimension, so the height Chart read first was the overworld's surface at the same X/Z. In a void or skyblock dimension that height is air and the scan took over, which hid the problem; in a dimension filled with rock it landed on an arbitrary block inside the terrain or on its roof, and that block was drawn as the surface. Chart no longer reads the height map outside the overworld: custom dimensions are always scanned.
+
+### Changed
+- The scenarios run against the Manifold 0.6.0 release, with a roofed fixture dimension that Chart's own scan is run over. Chart still works with Manifold 0.4.1 or later.
+
 ## [0.3.0] - 2026-09-27
 
 ### Added

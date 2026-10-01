@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
+using Manifold.Api;
+using Manifold.Api.Helpers;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -291,15 +294,21 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         var shadowMap = new byte[pixCount];
         Array.Fill(shadowMap, (byte)128);
 
+        // A custom dimension can declare where its scan starts (a roofed one sets its ceiling);
+        // otherwise the scan starts a little above the player.
         int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
-        int scanTop = Math.Min(mapSizeY - 1, playerY + 64);
+        int? declaredTop = currentDim == 0 ? null : MapHints.ScanTopY(ResolveDimension(currentDim));
+        var scan = new ColumnScan(
+            Top: Math.Min(mapSizeY - 1, declaredTop ?? (playerY + 64)),
+            SkipCeiling: declaredTop.HasValue,
+            TrustHeightMap: currentDim == 0);
 
         for (int i = 0; i < pixCount; i++)
         {
             int lx = i % cs;
             int lz = i / cs;
 
-            if (!TrySamplePixel(mc, chunkSlices, numChunkSlices, scanTop, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
+            if (!TrySamplePixel(mc, chunkSlices, numChunkSlices, scan, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
             {
                 continue;
             }
@@ -368,17 +377,17 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     }
 
     /// <summary>
-    /// Resolves the surface block at local (lx, lz). Reads <c>RainHeightMap</c> first; if
-    /// that height is air (the heightmap is stale, common in Manifold custom dims where
-    /// vanilla worldgen does not populate it), falls back to a top-down scan from
-    /// <paramref name="scanTop"/> down to y=1. Returns false when no surface could be found
-    /// (the pixel is left transparent).
+    /// Resolves the surface block at local (lx, lz). In the overworld it reads
+    /// <c>RainHeightMap</c> first and only scans when that height is air. In a custom dimension
+    /// the height map is never read: map chunks are not per dimension, so it holds the
+    /// overworld's surface at the same X/Z, which lands on an arbitrary block of a solid
+    /// dimension. Returns false when no surface could be found (the pixel is left transparent).
     /// </summary>
     private bool TrySamplePixel(
         IMapChunk mc,
         IWorldChunk[] slices,
         int numSlices,
-        int scanTop,
+        ColumnScan scan,
         int cs,
         int cx,
         int cz,
@@ -388,54 +397,62 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         out Block block,
         out bool usedFallback)
     {
-        int i = (lz * cs) + lx;
-        y = mc.RainHeightMap[i];
-        int cy = y / cs;
         usedFallback = false;
         block = null!;
+        y = 0;
 
-        if (cy >= numSlices)
+        if (scan.TrustHeightMap)
         {
-            return false;
-        }
-
-        int blockId;
-        var currentSlice = slices[cy];
-        if (currentSlice != null)
-        {
-            blockId = currentSlice.UnpackAndReadBlock(
-                MapUtil.Index3d(lx, y % cs, lz, cs, cs),
-                BlockLayersAccess.FluidOrSolid);
-            block = _capi!.World.Blocks[blockId];
-        }
-        else
-        {
-            blockId = 0;
-            block = _capi!.World.Blocks[0];
-        }
-
-        if (blockId != 0 && block != null && block.Id != 0)
-        {
-            return true;
-        }
-
-        // Fallback scan: vanilla worldgen populates RainHeightMap; Manifold custom dims do
-        // not, so we scan downward from (player.Y + 64) until we hit a non-air block.
-        usedFallback = true;
-        _samplePos!.Set((cx * cs) + lx, 0, (cz * cs) + lz);
-        for (int yy = scanTop; yy > 0; yy--)
-        {
-            _samplePos.Set((cx * cs) + lx, yy, (cz * cs) + lz);
-            var fb = _capi.World.BlockAccessor.GetBlock(_samplePos);
-            if (fb != null && fb.Id != 0)
+            y = mc.RainHeightMap[(lz * cs) + lx];
+            int cy = y / cs;
+            if (cy >= numSlices)
             {
-                y = yy;
-                block = fb;
+                return false;
+            }
+
+            var currentSlice = slices[cy];
+            int blockId = currentSlice == null
+                ? 0
+                : currentSlice.UnpackAndReadBlock(MapUtil.Index3d(lx, y % cs, lz, cs, cs), BlockLayersAccess.FluidOrSolid);
+            if (blockId != 0)
+            {
+                block = _capi!.World.Blocks[blockId];
                 return true;
             }
         }
 
-        return false;
+        usedFallback = true;
+        int x = (cx * cs) + lx;
+        int z = (cz * cs) + lz;
+        int found = SurfaceScan.Find(yy => BlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
+        if (found == SurfaceScan.NotFound)
+        {
+            return false;
+        }
+
+        y = found;
+        block = BlockAt(x, found, z);
+        return true;
+    }
+
+    private Block BlockAt(int x, int y, int z)
+    {
+        _samplePos!.Set(x, y, z);
+        return _capi!.World.BlockAccessor.GetBlock(_samplePos) ?? _capi.World.Blocks[0];
+    }
+
+    /// <summary>The local mirror of the dimension the player is in, or null without Manifold.</summary>
+    private IDimension? ResolveDimension(int dimensionId)
+    {
+        try
+        {
+            return ManifoldAccess.GetClient(_capi!)?.Dimensions.FirstOrDefault(d => d.InternalId == dimensionId);
+        }
+        catch (Exception ex)
+        {
+            _capi!.Logger.Warning("[Chart] could not resolve dimension {0}: {1}", dimensionId, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>
@@ -799,4 +816,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         return pixels;
     }
+
+    /// <summary>How one column is scanned: where from, and whether a ceiling is stepped through.</summary>
+    private readonly record struct ColumnScan(int Top, bool SkipCeiling, bool TrustHeightMap);
 }

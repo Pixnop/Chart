@@ -59,6 +59,19 @@ public sealed class ChartFixtureModSystem : ModSystem
         PublishDimensionId("void", voidDim.InternalId);
         PregenerateSpawn(voidDim);
 
+        // A roofed dimension declaring where Chart's surface scan starts, the way a cavern
+        // dimension's owner mod does.
+        IDimension cavern = _manifold.Registry
+            .Define(new AssetLocation(Domain, "cavern"))
+            .Persistent()
+            .WithWorldgen(new CavernWorldgen())
+            .WithFixedSpawn(FixedSpawn)
+            .WithGenerationRadius(2)
+            .WithMetadata("chart:scanTopY", 21)
+            .RegisterStatic();
+        PublishDimensionId("cavern", cavern.InternalId);
+        PregenerateSpawn(cavern);
+
         // Chart purges a dimension's tile cache when the client mirror relays this
         // event; pin the server-side contract that feeds it.
         _manifold.Registry.Destroyed += (_, e) => _sapi.WorldManager.SaveGame.StoreData(
