@@ -294,6 +294,11 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         var shadowMap = new byte[pixCount];
         Array.Fill(shadowMap, (byte)128);
 
+        // Heights found by the column scan, with one extra row and column on the north and west
+        // sides for the relief shading of the tile's edge. Filled as the scan goes.
+        var scanned = new int[(cs + 1) * (cs + 1)];
+        Array.Fill(scanned, Unscanned);
+
         // A custom dimension can declare where its scan starts (a roofed one sets its ceiling);
         // otherwise the scan starts a little above the player.
         int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
@@ -315,9 +320,21 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
             PeekDownThroughSnow(chunkSlices, numChunkSlices, cs, lx, lz, ref y, ref block);
 
-            // Skip hillshade when the fallback was used: neighbour mc.RainHeightMap is
-            // stale (overworld values in custom dims), so the slope delta would be garbage.
-            float b = usedFallback ? 1f : ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
+            // The height map holds overworld values, useless for a scanned column: its relief
+            // is shaded from the scanned heights of its neighbours instead.
+            float b;
+            if (usedFallback)
+            {
+                scanned[ScannedIndex(cs, lx, lz)] = y;
+                b = Hillshade.Factor(
+                    y - ScannedHeight(scanned, scan, cs, cx, cz, lx - 1, lz - 1, y),
+                    y - ScannedHeight(scanned, scan, cs, cx, cz, lx - 1, lz, y),
+                    y - ScannedHeight(scanned, scan, cs, cx, cz, lx, lz - 1, y));
+            }
+            else
+            {
+                b = ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
+            }
 
             ApplyPixelColor(i, block, b, cs, cx, cz, lx, lz, y, chunkSlices, numChunkSlices, tintedImage, shadowMap);
         }
@@ -435,6 +452,26 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         return true;
     }
 
+    private static int ScannedIndex(int cs, int lx, int lz) => ((lz + 1) * (cs + 1)) + lx + 1;
+
+    /// <summary>
+    /// Scanned height of the column at local (lx, lz), -1 allowed for the north and west
+    /// neighbours. A column with nothing to draw (void, or a chunk not loaded yet) reads as
+    /// <paramref name="fallback"/>, so it casts no relief.
+    /// </summary>
+    private int ScannedHeight(int[] scanned, ColumnScan scan, int cs, int cx, int cz, int lx, int lz, int fallback)
+    {
+        ref int height = ref scanned[ScannedIndex(cs, lx, lz)];
+        if (height == Unscanned)
+        {
+            int x = (cx * cs) + lx;
+            int z = (cz * cs) + lz;
+            height = SurfaceScan.Find(yy => BlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
+        }
+
+        return height == SurfaceScan.NotFound ? fallback : height;
+    }
+
     private Block BlockAt(int x, int y, int z)
     {
         _samplePos!.Set(x, y, z);
@@ -534,21 +571,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int rightTop = rightTopMc == null ? 0 : (y - rightTopMc.RainHeightMap[(rightZ * cs) + topXMod]);
         int leftBot = leftBotMc == null ? 0 : (y - leftBotMc.RainHeightMap[(leftZMod * cs) + botX]);
 
-        float slopedir = Math.Sign(leftTop) + Math.Sign(rightTop) + Math.Sign(leftBot);
-        float steepness = Math.Max(Math.Max(Math.Abs(leftTop), Math.Abs(rightTop)), Math.Abs(leftBot));
-        float magnitude = Math.Min(0.3f, steepness / 12f) / 1.25f;
-
-        if (slopedir > 0f)
-        {
-            return 1.08f + magnitude;
-        }
-
-        if (slopedir < 0f)
-        {
-            return 0.92f - magnitude;
-        }
-
-        return 1f;
+        return Hillshade.Factor(leftTop, rightTop, leftBot);
     }
 
     /// <summary>
@@ -818,5 +841,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     }
 
     /// <summary>How one column is scanned: where from, and whether a ceiling is stepped through.</summary>
+    private const int Unscanned = int.MinValue;
+
     private readonly record struct ColumnScan(int Top, bool SkipCeiling, bool TrustHeightMap);
 }
