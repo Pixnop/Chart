@@ -18,8 +18,9 @@ public class WaypointDimensionTests
 
     [Theory]
     [InlineData(8.0, 0)]
-    [InlineData(32767.9, 0)]
+    [InlineData(16383.9, 0)]
     [InlineData(32768.0, 1)]
+    [InlineData(49151.9, 1)]
     [InlineData(32776.0, 1)]
     [InlineData(98304.0, 3)]
     public void DimensionOf_DecodesTheDimensionSlice(double waypointY, int expectedDim)
@@ -33,6 +34,17 @@ public class WaypointDimensionTests
         // Bedrock-level glitches can produce Y just below zero; those pins are
         // overworld pins, not dimension -1.
         Assert.Equal(0, WaypointDimension.DimensionOf(-0.5));
+    }
+
+    [Theory]
+    [InlineData(-35.0, 0)]
+    [InlineData(-35.0, 1)]
+    [InlineData(-35.0, 10)]
+    public void DimensionOf_Should_FindTheDimension_When_ThePinIsUnderItsY0(double y, int dimension)
+    {
+        // A fall into the void kills around y -35, and the death pin is stored there: just
+        // under the dimension's own slice of the world.
+        Assert.Equal(dimension, WaypointDimension.DimensionOf(WaypointDimension.InternalY(y, dimension)));
     }
 
     [Theory]
