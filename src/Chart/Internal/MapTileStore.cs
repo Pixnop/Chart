@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -6,7 +7,7 @@ namespace Chart.Internal;
 
 /// <summary>
 /// One dimension's collection of RGBA tiles, keyed by (chunkX, chunkZ). Serialised to a
-/// deflate-compressed binary stream (header + variable count of fixed-size tiles).
+/// deflate-compressed binary stream (header, variable count of fixed-size tiles, scan top).
 /// </summary>
 /// <remarks>In-memory only; <see cref="PerDimensionMapStore"/> handles disk IO.</remarks>
 internal sealed class MapTileStore
@@ -16,6 +17,19 @@ internal sealed class MapTileStore
     private const int Version = 1;
 
     private readonly Dictionary<(int Cx, int Cz), byte[]> _tiles = new();
+
+    /// <param name="scanTop">See <see cref="ScanTop"/>.</param>
+    public MapTileStore(int scanTop = 0)
+    {
+        ScanTop = scanTop;
+    }
+
+    /// <summary>
+    /// The scan top the tiles were drawn with (<see cref="MapHints.ScanTopY"/>), 0 when the
+    /// dimension declared none. Tiles drawn from another scan top show another surface, so
+    /// <see cref="PerDimensionMapStore"/> only reuses a stored map for the same value.
+    /// </summary>
+    public int ScanTop { get; private set; }
 
     /// <summary>Number of tiles currently stored.</summary>
     public int Count => _tiles.Count;
@@ -67,6 +81,10 @@ internal sealed class MapTileStore
                 w.Write(cz);
                 w.Write(tile);
             }
+
+            // After the tiles, where a reader from before 0.4.0 has already stopped: those
+            // versions still load the file.
+            w.Write(ScanTop);
         }
 
         return ms.ToArray();
@@ -110,6 +128,10 @@ internal sealed class MapTileStore
                     store._tiles[(cx, cz)] = tile;
                 }
             }
+
+            // A file written before 0.4.0 ends with its last tile: no scan top.
+            var scanTop = r.ReadBytes(sizeof(int));
+            store.ScanTop = scanTop.Length == sizeof(int) ? BinaryPrimitives.ReadInt32LittleEndian(scanTop) : 0;
         }
         catch
         {

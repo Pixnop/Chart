@@ -1,9 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
-using Manifold.Api;
-using Manifold.Api.Helpers;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -301,10 +298,10 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         var scanned = new int[(cs + 1) * (cs + 1)];
         Array.Fill(scanned, Unscanned);
 
-        // A custom dimension can declare where its scan starts (a roofed one sets its ceiling);
-        // otherwise the scan starts a little above the player.
+        // A roofed dimension declares where its scan starts, and the store carries the value
+        // its tiles are drawn with; otherwise the scan starts a little above the player.
         int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
-        int? declaredTop = currentDim == 0 ? null : MapHints.ScanTopY(ResolveDimension(currentDim));
+        int? declaredTop = currentDim != 0 && store.ScanTop > 0 ? store.ScanTop : null;
         var scan = new ColumnScan(
             Top: Math.Min(mapSizeY - 1, declaredTop ?? (playerY + 64)),
             SkipCeiling: declaredTop.HasValue,
@@ -479,20 +476,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     {
         _samplePos!.Set(x, y, z);
         return _capi!.World.BlockAccessor.GetBlock(_samplePos) ?? _capi.World.Blocks[0];
-    }
-
-    /// <summary>The local mirror of the dimension the player is in, or null without Manifold.</summary>
-    private IDimension? ResolveDimension(int dimensionId)
-    {
-        try
-        {
-            return ManifoldAccess.GetClient(_capi!)?.Dimensions.FirstOrDefault(d => d.InternalId == dimensionId);
-        }
-        catch (Exception ex)
-        {
-            _capi!.Logger.Warning("[Chart] could not resolve dimension {0}: {1}", dimensionId, ex.Message);
-            return null;
-        }
     }
 
     /// <summary>

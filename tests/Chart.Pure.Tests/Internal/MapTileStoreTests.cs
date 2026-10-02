@@ -1,3 +1,5 @@
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using Chart.Internal;
 using Xunit;
@@ -53,6 +55,30 @@ public sealed class MapTileStoreTests
     }
 
     [Fact]
+    public void ScanTop_Should_SurviveARoundTrip_When_TheTilesWereDrawnWithOne()
+    {
+        var store = new MapTileStore(scanTop: 111);
+        store.SetTile(2, 3, new byte[ChunkSampler.TileBytes]);
+
+        var restored = MapTileStore.FromBytes(store.ToBytes());
+
+        Assert.Equal(111, restored.ScanTop);
+        Assert.True(restored.HasTile(2, 3));
+    }
+
+    [Fact]
+    public void FromBytes_Should_KeepTheTilesAndReportNoScanTop_When_TheFilePredatesTheScanTop()
+    {
+        var tile = new byte[ChunkSampler.TileBytes];
+        tile[7] = 0x5A;
+
+        var restored = MapTileStore.FromBytes(FileFromBefore040(cx: 4, cz: -2, tile));
+
+        Assert.Equal(0, restored.ScanTop);
+        Assert.Equal(tile, restored.GetTile(4, -2));
+    }
+
+    [Fact]
     public void AllTiles_Returns_All_Stored_Tiles()
     {
         var store = new MapTileStore();
@@ -73,5 +99,23 @@ public sealed class MapTileStoreTests
     {
         var store = new MapTileStore();
         Assert.Empty(store.AllTiles());
+    }
+
+    // The layout Chart wrote up to 0.3.0: magic, version, count, tiles, and nothing after.
+    private static byte[] FileFromBefore040(int cx, int cz, byte[] tile)
+    {
+        using var ms = new MemoryStream();
+        using (var deflate = new DeflateStream(ms, CompressionLevel.Optimal, leaveOpen: true))
+        using (var w = new BinaryWriter(deflate))
+        {
+            w.Write(0x43485254u);
+            w.Write(1);
+            w.Write(1);
+            w.Write(cx);
+            w.Write(cz);
+            w.Write(tile);
+        }
+
+        return ms.ToArray();
     }
 }

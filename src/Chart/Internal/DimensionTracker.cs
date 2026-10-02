@@ -76,20 +76,21 @@ internal sealed class DimensionTracker
             return;
         }
 
-        var dimCode = ResolveDimCode(pos.Dimension);
+        var (dimCode, scanTop) = Resolve(pos.Dimension);
         if (dimCode == _store.CurrentDimCode)
         {
             return;
         }
 
-        _store.LoadFor(dimCode);
+        _store.LoadFor(dimCode, scanTop);
         _capi.Logger.Notification("[Chart] swapped to dim '{0}'", dimCode);
 
         // Notify the map layer so it can rebuild its GPU components from the new store.
         OnStoreSwapped?.Invoke();
     }
 
-    private string ResolveDimCode(int dimensionId)
+    /// <summary>The store key of a dimension and the scan top it declares (0 for none).</summary>
+    private (string Code, int ScanTop) Resolve(int dimensionId)
     {
         try
         {
@@ -99,7 +100,7 @@ internal sealed class DimensionTracker
                 var dim = manifold.Dimensions.FirstOrDefault(d => d.InternalId == dimensionId);
                 if (dim is not null)
                 {
-                    return dim.Code.ToString();
+                    return (dim.Code.ToString(), dimensionId == 0 ? 0 : MapHints.ScanTopY(dim) ?? 0);
                 }
             }
         }
@@ -108,6 +109,6 @@ internal sealed class DimensionTracker
             _capi.Logger.Warning("[Chart] ManifoldAccess.GetClient failed: {0}", ex.Message);
         }
 
-        return dimensionId.ToString();
+        return (dimensionId.ToString(), 0);
     }
 }
