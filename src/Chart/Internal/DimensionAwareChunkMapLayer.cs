@@ -17,7 +17,9 @@ namespace Chart.Internal;
 ///
 /// Vanilla rendering pipeline (default / non-colorAccurate path):
 /// 1. Fixed 13-colour material palette (see <see cref="VanillaMapPalette"/>).
-/// 2. Surface height from <c>IMapChunk.RainHeightMap</c>; fallback scan for custom dims.
+/// 2. Surface height from <c>IMapChunk.RainHeightMap</c> in the overworld; outside it every
+///    column is scanned (see <see cref="SurfaceScan"/>), the height map being the overworld's, and a
+///    column is drawn with or without a map chunk (see <see cref="ChunkPresence"/>).
 /// 3. Block lookup via <c>IWorldChunk.UnpackAndReadBlock(FluidOrSolid)</c>.
 /// 4. Snow skip: if the top block is snow, sample Y-1 for the real terrain.
 /// 5. Water/ice edge: if a lake pixel has any non-lake cardinal neighbour, paint it as "wateredge".
@@ -48,6 +50,9 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
     // Reused BlockPos to avoid per-column allocation during sampling.
     private BlockPos? _samplePos;
+
+    // The air block, looked up once: the column scan asks for it at every block it reads.
+    private Block? _air;
 
     // Chunk size (typically 32). Cached once in OnLoaded.
     private int _chunkSize;
@@ -93,6 +98,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         // Dimension 0 is the overworld; the actual dimension is set each ProcessChunk call.
         _samplePos = new BlockPos(0);
+        _air = _capi.World.Blocks[0];
 
         // Build the vanilla material palette from the full block registry.
         _palette.Build(_capi.World.Blocks);
@@ -255,8 +261,8 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             return;
         }
 
-        var mc = _capi.World.BlockAccessor.GetMapChunk(cx, cz);
-        if (mc == null)
+        int currentDim = _capi.World.Player?.Entity?.Pos.Dimension ?? 0;
+        if (!TryGetHeights(cx, cz, currentDim, out var heights))
         {
             return;
         }
@@ -269,7 +275,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         // BlockAccessor.GetBlock(BlockPos) reads from the BlockPos's `dimension` field.
         // _samplePos was constructed with dim=0 - set the correct dim explicitly each call.
-        int currentDim = _capi.World.Player?.Entity?.Pos.Dimension ?? 0;
         _samplePos!.dimension = currentDim;
 
         int cs = _chunkSize;
@@ -281,34 +286,37 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             return;
         }
 
-        // Neighbour map chunks for the cross-chunk slope calculation.
-        var mcNW = _capi.World.BlockAccessor.GetMapChunk(cx - 1, cz - 1);
-        var mcW = _capi.World.BlockAccessor.GetMapChunk(cx - 1, cz);
-        var mcN = _capi.World.BlockAccessor.GetMapChunk(cx, cz - 1);
-
         int pixCount = cs * cs;
         var tintedImage = new int[pixCount];
         var shadowMap = new byte[pixCount];
         Array.Fill(shadowMap, (byte)128);
 
+        // A roofed dimension declares where its scan starts, and the store carries the value
+        // its tiles are drawn with; otherwise the scan starts a little above the player.
         int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
-        int scanTop = Math.Min(mapSizeY - 1, playerY + 64);
+        int? declaredTop = currentDim != 0 && store.ScanTop > 0 ? store.ScanTop : null;
+        var scanned = new ScannedTile(
+            cs,
+            cx * cs,
+            cz * cs,
+            Math.Min(mapSizeY - 1, declaredTop ?? (playerY + 64)),
+            declaredTop.HasValue,
+            SurfaceIdAt);
 
         for (int i = 0; i < pixCount; i++)
         {
             int lx = i % cs;
             int lz = i / cs;
 
-            if (!TrySamplePixel(mc, chunkSlices, numChunkSlices, scanTop, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
+            if (!TrySamplePixel(heights, chunkSlices, numChunkSlices, scanned, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
             {
                 continue;
             }
 
+            int surfaceY = y;
             PeekDownThroughSnow(chunkSlices, numChunkSlices, cs, lx, lz, ref y, ref block);
 
-            // Skip hillshade when the fallback was used: neighbour mc.RainHeightMap is
-            // stale (overworld values in custom dims), so the slope delta would be garbage.
-            float b = usedFallback ? 1f : ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
+            float b = ReliefFactor(heights, scanned, usedFallback, lx, lz, y, surfaceY);
 
             ApplyPixelColor(i, block, b, cs, cx, cz, lx, lz, y, chunkSlices, numChunkSlices, tintedImage, shadowMap);
         }
@@ -332,6 +340,36 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     }
 
     /// <summary>
+    /// Gathers the height maps column (cx, cz) is drawn from. In the overworld these are the
+    /// engine's map chunks of the column and of its north-west, west and north neighbours; the
+    /// column waits (returns false) until its own has reached the client. Elsewhere none is
+    /// needed (see <see cref="ChunkPresence"/>): returns true with <paramref name="heights"/>
+    /// null and the column is drawn.
+    /// </summary>
+    private bool TryGetHeights(int cx, int cz, int dimension, out OverworldHeights? heights)
+    {
+        heights = null;
+        if (!ChunkPresence.NeedsMapChunk(dimension))
+        {
+            return true;
+        }
+
+        var accessor = _capi!.World.BlockAccessor;
+        var column = accessor.GetMapChunk(cx, cz);
+        if (column == null)
+        {
+            return false;
+        }
+
+        heights = new OverworldHeights(
+            column,
+            accessor.GetMapChunk(cx - 1, cz - 1),
+            accessor.GetMapChunk(cx - 1, cz),
+            accessor.GetMapChunk(cx, cz - 1));
+        return true;
+    }
+
+    /// <summary>
     /// Prefetches all vertical chunk slices for column (cx, cz) in the player's current
     /// dimension. Returns false if a low slice (lower half of the world) is missing or not
     /// yet loaded from the server - the column is deferred to the next tick. Upper slices may
@@ -347,8 +385,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         for (int cy = 0; cy < numChunkSlices; cy++)
         {
             var slice = _capi!.World.BlockAccessor.GetChunk(cx, cy + dimChunkYOffset, cz);
-            bool loaded = slice is IClientChunk clientSlice && clientSlice.LoadedFromServer;
-            if (loaded)
+            if (ChunkPresence.IsLoaded(slice))
             {
                 slices[cy] = slice!;
                 continue;
@@ -368,17 +405,17 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     }
 
     /// <summary>
-    /// Resolves the surface block at local (lx, lz). Reads <c>RainHeightMap</c> first; if
-    /// that height is air (the heightmap is stale, common in Manifold custom dims where
-    /// vanilla worldgen does not populate it), falls back to a top-down scan from
-    /// <paramref name="scanTop"/> down to y=1. Returns false when no surface could be found
-    /// (the pixel is left transparent).
+    /// Resolves the surface block at local (lx, lz). In the overworld (<paramref name="heights"/>
+    /// is set) it reads <c>RainHeightMap</c> first and only scans when that height is air. In a
+    /// custom dimension the height map is never read: map chunks are not per dimension, so it
+    /// holds the overworld's surface at the same X/Z, which lands on an arbitrary block of a solid
+    /// dimension. Returns false when no surface could be found (the pixel is left transparent).
     /// </summary>
     private bool TrySamplePixel(
-        IMapChunk mc,
+        OverworldHeights? heights,
         IWorldChunk[] slices,
         int numSlices,
-        int scanTop,
+        ScannedTile scanned,
         int cs,
         int cx,
         int cz,
@@ -388,54 +425,56 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         out Block block,
         out bool usedFallback)
     {
-        int i = (lz * cs) + lx;
-        y = mc.RainHeightMap[i];
-        int cy = y / cs;
         usedFallback = false;
         block = null!;
+        y = 0;
 
-        if (cy >= numSlices)
+        if (heights != null)
         {
-            return false;
-        }
-
-        int blockId;
-        var currentSlice = slices[cy];
-        if (currentSlice != null)
-        {
-            blockId = currentSlice.UnpackAndReadBlock(
-                MapUtil.Index3d(lx, y % cs, lz, cs, cs),
-                BlockLayersAccess.FluidOrSolid);
-            block = _capi!.World.Blocks[blockId];
-        }
-        else
-        {
-            blockId = 0;
-            block = _capi!.World.Blocks[0];
-        }
-
-        if (blockId != 0 && block != null && block.Id != 0)
-        {
-            return true;
-        }
-
-        // Fallback scan: vanilla worldgen populates RainHeightMap; Manifold custom dims do
-        // not, so we scan downward from (player.Y + 64) until we hit a non-air block.
-        usedFallback = true;
-        _samplePos!.Set((cx * cs) + lx, 0, (cz * cs) + lz);
-        for (int yy = scanTop; yy > 0; yy--)
-        {
-            _samplePos.Set((cx * cs) + lx, yy, (cz * cs) + lz);
-            var fb = _capi.World.BlockAccessor.GetBlock(_samplePos);
-            if (fb != null && fb.Id != 0)
+            y = heights.Column.RainHeightMap[(lz * cs) + lx];
+            int cy = y / cs;
+            if (cy >= numSlices)
             {
-                y = yy;
-                block = fb;
+                return false;
+            }
+
+            var currentSlice = slices[cy];
+            int blockId = currentSlice == null
+                ? 0
+                : currentSlice.UnpackAndReadBlock(MapUtil.Index3d(lx, y % cs, lz, cs, cs), BlockLayersAccess.FluidOrSolid);
+            if (blockId != 0)
+            {
+                block = _capi!.World.Blocks[blockId];
                 return true;
             }
         }
 
-        return false;
+        usedFallback = true;
+        int found = scanned.Scan(lx, lz);
+        if (found == SurfaceScan.NotFound)
+        {
+            return false;
+        }
+
+        y = found;
+        block = SurfaceBlockAt((cx * cs) + lx, found, (cz * cs) + lz);
+        return true;
+    }
+
+    /// <summary>
+    /// Id of the surface block at a world position, 0 where nothing counts as one: what
+    /// <see cref="ScannedTile"/> scans.
+    /// </summary>
+    private int SurfaceIdAt(int x, int y, int z) => SurfaceBlockAt(x, y, z).Id;
+
+    /// <summary>
+    /// The block a column scan sees at a world position of the current dimension, under
+    /// <see cref="SurfaceRule"/>.
+    /// </summary>
+    private Block SurfaceBlockAt(int x, int y, int z)
+    {
+        _samplePos!.Set(x, y, z);
+        return SurfaceRule.BlockAt(_capi!.World.BlockAccessor, _samplePos, _air!);
     }
 
     /// <summary>
@@ -468,6 +507,28 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         block = _capi!.World.Blocks[belowId];
         y = yBelow;
+    }
+
+    /// <summary>
+    /// The brightness factor of one pixel at surface height <paramref name="surfaceY"/> (before
+    /// looking under the snow) and drawn height <paramref name="y"/>. In the overworld it is the
+    /// vanilla hillshade; flat where the height map pointed at air and the scan took over, since
+    /// the neighbours' heights come from that same map. Elsewhere the height map holds overworld
+    /// values, useless for a scanned column: its relief is shaded from the scanned heights of its
+    /// neighbours instead. Like vanilla, from the surface as found: a neighbour's height is its
+    /// snow too, and a snow field must come out flat.
+    /// </summary>
+    private float ReliefFactor(
+        OverworldHeights? heights, ScannedTile scanned, bool usedFallback, int lx, int lz, int y, int surfaceY)
+    {
+        if (heights == null)
+        {
+            return scanned.Relief(lx, lz, surfaceY);
+        }
+
+        return usedFallback
+            ? 1f
+            : ComputeShadowFactor(heights.Column, heights.NorthWest, heights.North, heights.West, _chunkSize, lx, lz, y);
     }
 
     /// <summary>
@@ -517,21 +578,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int rightTop = rightTopMc == null ? 0 : (y - rightTopMc.RainHeightMap[(rightZ * cs) + topXMod]);
         int leftBot = leftBotMc == null ? 0 : (y - leftBotMc.RainHeightMap[(leftZMod * cs) + botX]);
 
-        float slopedir = Math.Sign(leftTop) + Math.Sign(rightTop) + Math.Sign(leftBot);
-        float steepness = Math.Max(Math.Max(Math.Abs(leftTop), Math.Abs(rightTop)), Math.Abs(leftBot));
-        float magnitude = Math.Min(0.3f, steepness / 12f) / 1.25f;
-
-        if (slopedir > 0f)
-        {
-            return 1.08f + magnitude;
-        }
-
-        if (slopedir < 0f)
-        {
-            return 0.92f - magnitude;
-        }
-
-        return 1f;
+        return Hillshade.Factor(leftTop, rightTop, leftBot);
     }
 
     /// <summary>
@@ -626,8 +673,8 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// <summary>
     /// Checks whether all 4 cardinal neighbours (N, S, E, W) at the same Y are lake blocks.
     /// Returns false if any neighbour is non-lake, which signals that this pixel should be
-    /// rendered as a shoreline ("wateredge"). Cross-chunk neighbours whose map chunk is not
-    /// loaded yet are skipped (they do not force an edge).
+    /// rendered as a shoreline ("wateredge"). Cross-chunk neighbours that are not loaded yet
+    /// are skipped (they do not force an edge).
     /// </summary>
     private bool IsNeighbourLake(in PixelContext ctx)
     {
@@ -655,8 +702,8 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// <summary>
     /// Tristate lake check for the neighbour at offset (<paramref name="dx"/>,
     /// <paramref name="dz"/>) from the pixel in <paramref name="ctx"/>:
-    /// <c>true</c> = lake, <c>false</c> = not lake, <c>null</c> = unknown (the neighbour's
-    /// map chunk is not loaded; the caller should not treat this as an edge).
+    /// <c>true</c> = lake, <c>false</c> = not lake, <c>null</c> = unknown (the neighbour is not
+    /// loaded; the caller should not treat this as an edge).
     /// </summary>
     private bool? SampleNeighbourIsLake(in PixelContext ctx, IWorldChunk currentSlice, int yLocal, int dx, int dz)
     {
@@ -676,7 +723,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             nb = SampleCrossChunkNeighbour(in ctx, nx, nz);
             if (nb == null)
             {
-                return null; // neighbour map chunk not loaded - skip
+                return null; // neighbour not loaded - skip
             }
         }
 
@@ -686,22 +733,23 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// <summary>
     /// Resolves the block at neighbour-chunk-local (<paramref name="nx"/>, <paramref name="nz"/>),
     /// where one or both coordinates lie outside the current chunk's range. Returns null when
-    /// the neighbour map chunk is not yet loaded (caller treats as a skip).
+    /// the neighbour is not yet loaded (caller treats as a skip); see
+    /// <see cref="ChunkPresence.IsNeighbourPresent"/> for what loaded means in each dimension.
     /// </summary>
     private Block? SampleCrossChunkNeighbour(in PixelContext ctx, int nx, int nz)
     {
         int ncx = ctx.Cx + CardinalSign(nx, ctx.Cs);
         int ncz = ctx.Cz + CardinalSign(nz, ctx.Cs);
-        var nmc = _capi!.World.BlockAccessor.GetMapChunk(ncx, ncz);
-        if (nmc == null)
-        {
-            return null;
-        }
-
         int nnx = ((nx % ctx.Cs) + ctx.Cs) % ctx.Cs;
         int nnz = ((nz % ctx.Cs) + ctx.Cs) % ctx.Cs;
         _samplePos!.Set((ncx * ctx.Cs) + nnx, ctx.Y, (ncz * ctx.Cs) + nnz);
-        return _capi.World.BlockAccessor.GetBlock(_samplePos);
+
+        var accessor = _capi!.World.BlockAccessor;
+        bool present = ChunkPresence.IsNeighbourPresent(
+            _samplePos.dimension,
+            accessor.GetMapChunk(ncx, ncz),
+            accessor.GetChunkAtBlockPos(_samplePos));
+        return present ? accessor.GetBlock(_samplePos) : null;
     }
 
     /// <summary>
@@ -799,4 +847,13 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         return pixels;
     }
+
+    /// <summary>
+    /// The engine's height maps one overworld column is drawn from: its own map chunk, and those of
+    /// its north-west, west and north neighbours, which the relief of its first row and column
+    /// reads (null where the client holds none yet). There are none outside the overworld, see
+    /// <see cref="ChunkPresence"/>.
+    /// </summary>
+    private sealed record OverworldHeights(
+        IMapChunk Column, IMapChunk? NorthWest, IMapChunk? West, IMapChunk? North);
 }

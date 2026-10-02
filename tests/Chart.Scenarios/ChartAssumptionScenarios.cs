@@ -2,6 +2,7 @@ namespace Chart.Scenarios;
 
 using Atlas.Api;
 using Atlas.XUnit;
+using Chart.Internal;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
 using Xunit;
@@ -24,38 +25,46 @@ public class ChartAssumptionScenarios : ChartScenarioBase
     private const int ProbeZ = 512;
     private const int SlabTopY = 4;
 
+    // The fixture's CavernWorldgen: the slab's floor, plus a roof at y 20..22; the dimension
+    // declares its scan top inside that roof.
+    private const int CavernRoofTopY = 22;
+    private const int CavernDeclaredScanTop = 21;
+
     /// <summary>
-    /// DimensionAwareChunkMapLayer.TrySamplePixel trusts RainHeightMap only when the
-    /// block at that height is solid, and falls back to a bounded top-down scan
-    /// otherwise, because Manifold custom dims do not maintain the heightmap. In an
-    /// all-air dimension no height can point at a solid block, so if this read ever
-    /// returns solid, per-dim heightmaps have appeared and Chart's fallback (plus its
-    /// skip-hillshade-on-fallback rule) must be revisited.
+    /// DimensionAwareChunkMapLayer never reads RainHeightMap outside the overworld, because map
+    /// chunks are not per dimension: the height one holds is the overworld's surface at the same
+    /// X/Z. Pin that under the world spawn, where the two differ: the overworld's superflat
+    /// surface sits a couple of blocks up, the cavern dimension's top is its roof at y 22. If
+    /// the height ever follows the dimension instead, height maps have become per dimension and
+    /// Chart could read them again instead of scanning every column.
     /// </summary>
     [AtlasScenario]
-    public async Task RainHeightMap_Should_PointAtAir_When_ReadInVoidDimension()
+    public async Task RainHeightMap_Should_HoldTheOverworldsSurface_When_ACustomDimensionSharesTheColumn()
     {
-        int dimId = await DimensionId("void");
+        int dimId = await DimensionId("cavern");
 
-        // Probe under the world spawn: its overworld map chunk is guaranteed loaded,
-        // unlike the fixture's fixed dim spawn column. Generate the void dim there.
+        // Under the world spawn the overworld column is loaded, unlike the fixture's fixed
+        // dimension spawn column. Generate the cavern there.
         var spawn = World.Spawn;
-        int cx = spawn.X / ChunkSize;
-        int cz = spawn.Z / ChunkSize;
-        CommandResult pregen = await World.ExecuteCommand($"/chartfx pregen void {spawn.X} {spawn.Z}");
+        CommandResult pregen = await World.ExecuteCommand($"/chartfx pregen cavern {spawn.X} {spawn.Z}");
         Assert.True(pregen.Ok, "pregen reported failure.");
-        await WaitForDimChunk(dimId, cx, cz);
+        await World.Until(
+            () => World.BlockAt(new BlockPos(spawn.X, CavernRoofTopY, spawn.Z, dimId)).Id != 0,
+            timeoutTicks: 1200);
 
-        var mc = World.Api.World.BlockAccessor.GetMapChunk(cx, cz);
+        var mc = World.Api.World.BlockAccessor.GetMapChunk(spawn.X / ChunkSize, spawn.Z / ChunkSize);
         Assert.NotNull(mc);
-
         int height = mc!.RainHeightMap[((spawn.Z % ChunkSize) * ChunkSize) + (spawn.X % ChunkSize)];
-        var atHeight = new BlockPos(spawn.X, height, spawn.Z, dimId);
-        int blockId = World.BlockAt(atHeight).Id;
 
-        Assert.True(
-            blockId == 0,
-            $"RainHeightMap points at solid block id {blockId} (y={height}) inside an all-air custom dim; the heightmap is now dim-aware and Chart's fallback-scan assumption no longer holds.");
+        int scanTop = World.Api.WorldManager.MapSizeY - 1;
+        int TopOf(int dimension) => SurfaceScan.Find(
+            y => World.BlockAt(new BlockPos(spawn.X, y, spawn.Z, dimension)).Id,
+            scanTop,
+            skipCeiling: false);
+
+        Assert.Equal(CavernRoofTopY, TopOf(dimId));
+        Assert.Equal(TopOf(0), height);
+        Assert.NotEqual(CavernRoofTopY, height);
     }
 
     /// <summary>
@@ -85,6 +94,27 @@ public class ChartAssumptionScenarios : ChartScenarioBase
 
         int graniteId = World.Api.World.GetBlock(new AssetLocation("game", "rock-granite"))!.BlockId;
         Assert.Equal(graniteId, blockId);
+    }
+
+    /// <summary>
+    /// In a roofed dimension a scan from above stops on the roof, so the owner mod declares a
+    /// scan top (the "chart:scanTopY" metadata) and Chart steps through the ceiling it starts
+    /// in. Run Chart's own scan over the real blocks of the fixture's cavern dimension: without
+    /// the hint it finds the roof, with it the floor.
+    /// </summary>
+    [AtlasScenario]
+    public async Task SurfaceScan_Should_FindTheFloorUnderTheRoof_When_StartedInsideTheCeiling()
+    {
+        int dimId = await DimensionId("cavern");
+        var probe = new BlockPos(ProbeX, CavernRoofTopY, ProbeZ, dimId);
+        await World.Until(
+            () => World.BlockAt(probe).Code?.ToString() == "game:rock-granite",
+            timeoutTicks: 1200);
+
+        int IdAt(int y) => World.BlockAt(new BlockPos(ProbeX, y, ProbeZ, dimId)).Id;
+
+        Assert.Equal(CavernRoofTopY, SurfaceScan.Find(IdAt, scanTop: 64, skipCeiling: false));
+        Assert.Equal(SlabTopY, SurfaceScan.Find(IdAt, CavernDeclaredScanTop, skipCeiling: true));
     }
 
     /// <summary>
@@ -121,16 +151,5 @@ public class ChartAssumptionScenarios : ChartScenarioBase
 
         Assert.Equal("chartfixture:slab", code);
         await World.Ticks(1);
-    }
-
-    /// <summary>
-    /// Waits until the dim-encoded chunk column exists (same encoding Chart uses for
-    /// its slice lookups); void dims have no block to probe for readiness.
-    /// </summary>
-    private async Task WaitForDimChunk(int dimId, int cx, int cz)
-    {
-        await World.Until(
-            () => World.Api.WorldManager.GetChunk(cx, dimId * 1024, cz) != null,
-            timeoutTicks: 1200);
     }
 }

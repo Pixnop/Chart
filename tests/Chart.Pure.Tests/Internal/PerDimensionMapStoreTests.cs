@@ -16,6 +16,38 @@ public sealed class PerDimensionMapStoreTests
     private static readonly string[] AnyDim = { "anything" };
 
     [Fact]
+    public void LoadFor_Should_KeepStoredTiles_When_TheScanTopIsUnchanged()
+    {
+        using var tmp = new TempDataRoot();
+        var store = new PerDimensionMapStore(tmp.Capi);
+        store.LoadFor("mymod:deep", scanTop: 111);
+        store.Active.SetTile(1, 2, new byte[ChunkSampler.TileBytes]);
+        store.LoadFor("mymod:elsewhere");
+
+        store.LoadFor("mymod:deep", scanTop: 111);
+
+        Assert.True(store.Active.HasTile(1, 2));
+        Assert.Equal(111, store.Active.ScanTop);
+    }
+
+    [Fact]
+    public void LoadFor_Should_DiscardStoredTiles_When_TheyWereDrawnWithAnotherScanTop()
+    {
+        using var tmp = new TempDataRoot();
+        var store = new PerDimensionMapStore(tmp.Capi);
+
+        // What 0.3.0 left on disk for a roofed dimension: tiles drawn with no scan top.
+        store.LoadFor("mymod:deep");
+        store.Active.SetTile(1, 2, new byte[ChunkSampler.TileBytes]);
+        store.LoadFor("mymod:elsewhere");
+
+        store.LoadFor("mymod:deep", scanTop: 111);
+
+        Assert.False(store.Active.HasTile(1, 2));
+        Assert.Equal(111, store.Active.ScanTop);
+    }
+
+    [Fact]
     public void DeleteFor_Removes_The_Bin_File_For_The_Given_Dim()
     {
         using var tmp = new TempDataRoot();
