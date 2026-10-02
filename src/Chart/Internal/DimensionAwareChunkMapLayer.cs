@@ -318,22 +318,31 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 continue;
             }
 
+            int surfaceY = y;
             PeekDownThroughSnow(chunkSlices, numChunkSlices, cs, lx, lz, ref y, ref block);
 
-            // The height map holds overworld values, useless for a scanned column: its relief
-            // is shaded from the scanned heights of its neighbours instead.
             float b;
-            if (usedFallback)
+            if (!usedFallback)
             {
-                scan.Heights[ScannedIndex(cs, lx, lz)] = y;
-                b = Hillshade.Factor(
-                    y - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, y),
-                    y - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, y),
-                    y - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, y));
+                b = ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
+            }
+            else if (scan.TrustHeightMap)
+            {
+                // An overworld column whose height map points at air: its neighbours' heights
+                // come from that same map, so no relief.
+                b = 1f;
             }
             else
             {
-                b = ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
+                // The height map holds overworld values, useless for a scanned column: its relief
+                // is shaded from the scanned heights of its neighbours instead. Like vanilla, from
+                // the surface as found, before looking under the snow: a neighbour's height is
+                // its snow too, and a snow field must come out flat.
+                scan.Heights[ScannedIndex(cs, lx, lz)] = surfaceY;
+                b = Hillshade.Factor(
+                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, surfaceY),
+                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, surfaceY),
+                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, surfaceY));
             }
 
             ApplyPixelColor(i, block, b, cs, cx, cz, lx, lz, y, chunkSlices, numChunkSlices, tintedImage, shadowMap);
