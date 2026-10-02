@@ -44,8 +44,8 @@ manifold.Registry.Define(code)
 The value is an integer Y. The ceiling is the unbroken run of blocks the scan starts in: a
 column that is solid from that Y all the way down is drawn as a wall, a column with nothing
 under its ceiling is left black like the void, and a Y above the roof maps the roof. The hint
-reaches clients through Manifold's metadata replication, new in Manifold 0.6.0, which is why
-Chart requires that version. `chartScanTopY`, the key Rift Traveler shipped first, is read too.
+reaches clients through Manifold's metadata replication, there since Manifold 0.6.0 (Chart
+requires 0.6.1). `chartScanTopY`, the key Rift Traveler shipped first, is read too.
 
 Change the value and the dimension is mapped again: Chart drops the tiles it drew from another
 scan top, including the ones it drew before it read the hint at all.

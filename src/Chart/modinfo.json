@@ -9,6 +9,6 @@
   "dependencies": {
     "game": "",
     "survival": "",
-    "manifold": "0.6.0"
+    "manifold": "0.6.1"
   }
 }
