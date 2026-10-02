@@ -46,19 +46,6 @@ public sealed class ChartFixtureModSystem : ModSystem
         PublishDimensionCode("slab", slab.Code.ToString());
         PregenerateSpawn(slab);
 
-        // All-air dimension for the RainHeightMap pin: in a void dim there is no
-        // solid block any height could legitimately point at, so the assertion
-        // cannot pass by coincidence with the overworld's superflat surface.
-        IDimension voidDim = _manifold.Registry
-            .Define(new AssetLocation(Domain, "void"))
-            .Persistent()
-            .WithWorldgen(new BasicVoidWorldgenStrategy())
-            .WithFixedSpawn(FixedSpawn)
-            .WithGenerationRadius(2)
-            .RegisterStatic();
-        PublishDimensionId("void", voidDim.InternalId);
-        PregenerateSpawn(voidDim);
-
         // A roofed dimension declaring where Chart's surface scan starts, the way a cavern
         // dimension's owner mod does.
         IDimension cavern = _manifold.Registry
