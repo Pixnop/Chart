@@ -3,6 +3,7 @@ namespace Chart.Scenarios;
 using Atlas.Api;
 using Atlas.XUnit;
 using Chart.Internal;
+using Vintagestory.API.MathTools;
 using Vintagestory.API.Util;
 using Vintagestory.GameContent;
 using Xunit;
@@ -10,10 +11,10 @@ using Xunit;
 /// <summary>
 /// Chart's waypoint filter (DimensionAwareWaypointMapLayer) runs on the client, which Atlas
 /// cannot boot. Everything it consumes comes from the server, though: these scenarios have a
-/// real player create pins with the vanilla <c>/waypoint</c> command, capture the waypoint list
-/// the server sends that player on the world map channel, and run Chart's own
-/// <see cref="WaypointDimension"/> over it. Not covered: the client-side layer swap itself and
-/// the rendering.
+/// real player create pins with the vanilla <c>/waypoint</c> command (or die, for the pin the
+/// server makes itself), capture the waypoint list the server sends that player on the world
+/// map channel, and run Chart's own <see cref="WaypointDimension"/> over it. Not covered: the
+/// client-side layer swap itself and the rendering.
 /// </summary>
 [Trait("Category", "E2E")]
 public class WaypointScenarios : ChartScenarioBase
@@ -23,6 +24,12 @@ public class WaypointScenarios : ChartScenarioBase
     // Matches the fixture's FixedSpawn.
     private const int SpawnX = 512;
     private const int SpawnZ = 512;
+
+    // The engine's void damage starts under Y -30, whatever the dimension.
+    private const int VoidY = -35;
+
+    // The icon vanilla gives a death pin. Its title is translated, its icon is not.
+    private const string DeathPinIcon = "gravestone";
 
     /// <summary>
     /// The whole filter rests on vanilla storing the player's internal Y (y + dim * 32768) in
@@ -97,6 +104,41 @@ public class WaypointScenarios : ChartScenarioBase
         Waypoint pin = Assert.Single(LatestWaypoints(player));
         Assert.Equal(slabId, WaypointDimension.DimensionOf(pin.Position.Y));
         Assert.Equal(y, pin.Position.Y);
+    }
+
+    /// <summary>
+    /// The server makes a death pin where the player dies, with the same internal Y as any other
+    /// pin. The engine hurts whatever is under Y -30, so a player who falls out of a void
+    /// dimension dies under Y 0 of it and the pin is stored just under the dimension's own
+    /// slice of the world, which a truncating decode files in the dimension before. This puts a
+    /// survival player under the slab and lets the engine's void damage kill it, then checks
+    /// that the pin the server syncs is stored under the slab's slice and still decodes to the
+    /// slab. The player is placed under the world rather than dropped: a test player runs no
+    /// client physics, so the fall itself is not replayed.
+    /// </summary>
+    [AtlasScenario]
+    public async Task DeathPin_Should_BelongToTheDimension_When_ThePlayerDiesUnderItsY0()
+    {
+        int slabId = await DimensionId("slab");
+        ITestPlayer player = await World.JoinPlayer("chart_wpdeath");
+        await SendTo(player, "slab", slabId);
+
+        // A test player joins in creative mode, which takes no damage.
+        CommandResult mode = await player.ExecuteCommand("/gamemode survival");
+        Assert.True(mode.Ok, mode.Message);
+
+        await player.TeleportTo(new BlockPos(SpawnX, VoidY, SpawnZ, slabId));
+        await World.Until(() => !player.Entity.Alive);
+        await World.Ticks(2);
+
+        Waypoint pin = Assert.Single(LatestWaypoints(player), w => w.Icon == DeathPinIcon);
+
+        // Under the slab's own slice: the case a truncating decode got wrong.
+        double sliceStart = (double)slabId * BlockPos.DimensionBoundary;
+        Assert.True(
+            pin.Position.Y < sliceStart,
+            FormattableString.Invariant($"The death pin's Y {pin.Position.Y} is not under the slab's slice, which starts at {sliceStart}."));
+        Assert.Equal(slabId, WaypointDimension.DimensionOf(pin.Position.Y));
     }
 
     private static IEnumerable<int> VisibleIndices(List<Waypoint> waypoints, int dimension) =>
