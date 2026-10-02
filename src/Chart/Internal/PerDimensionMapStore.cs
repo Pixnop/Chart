@@ -41,10 +41,13 @@ internal sealed class PerDimensionMapStore : IDisposable
     /// <summary>
     /// Switches the active store to <paramref name="dimCode"/>.
     /// Saves the current store first unless no dimension is loaded yet.
-    /// No-op if <paramref name="dimCode"/> is already active.
+    /// No-op if <paramref name="dimCode"/> is already active. Stored tiles drawn with another
+    /// scan top are dropped: they show another surface (the roof instead of the cavern floor,
+    /// for the maps Chart drew before it read the hint).
     /// </summary>
     /// <param name="dimCode">Dimension code to load.</param>
-    public void LoadFor(string dimCode)
+    /// <param name="scanTop">The scan top the dimension declares, 0 for none.</param>
+    public void LoadFor(string dimCode, int scanTop = 0)
     {
         ArgumentException.ThrowIfNullOrEmpty(dimCode);
 
@@ -63,6 +66,17 @@ internal sealed class PerDimensionMapStore : IDisposable
         }
 
         _active = MapTileStore.FromBytes(data);
+        if (_active.ScanTop != scanTop)
+        {
+            _capi.Logger.Notification(
+                "[Chart] Dim '{0}': dropping {1} tiles drawn with scan top {2}, now {3}.",
+                dimCode,
+                _active.Count,
+                _active.ScanTop,
+                scanTop);
+            _active = new MapTileStore(scanTop);
+        }
+
         _activeDimCode = dimCode;
 
         _capi.Logger.Notification(

@@ -46,6 +46,9 @@ wall. The hint reaches clients through Manifold's metadata replication, so it ne
 0.6.0 or later on the server; with an older Manifold the dimension is mapped as if it had no
 hint. `chartScanTopY`, the key Rift Traveler shipped first, is read too.
 
+Change the value and the dimension is mapped again: Chart drops the tiles it drew from another
+scan top, including the ones it drew before it read the hint at all.
+
 ## Build
 
 Requires the .NET 10 SDK and a Vintage Story install. Set the `VINTAGE_STORY` environment
