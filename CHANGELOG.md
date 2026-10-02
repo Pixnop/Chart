@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Requires Manifold 0.6.0 or later**, the first release that sends dimension metadata to clients; the scan hint above travels that way. The game runs the server's Manifold on the client, so on a server that still has an older Manifold this version of Chart is not loaded: keep Chart 0.3.0 there until the server updates.
 - The scenarios run against the Manifold 0.6.0 release, with a roofed fixture dimension that Chart's own scan is run over, and assert that the hint is in the manifest a joining player receives and that the height map a custom dimension shares is the overworld's.
 - The relief shading of scanned columns and the rule that picks their surface moved out of the map layer into classes with unit tests, and two more scenarios run them over a real server's blocks: the rule against the engine's rain height map, and the shading over a roofed dimension's floor.
-- Atlas test harness bumped to 0.16.0-rc.1.
+- Atlas test harness bumped to 0.16.0-rc.2.
 
 ## [0.3.0] - 2026-09-27
 
