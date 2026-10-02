@@ -113,32 +113,15 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
     /// <inheritdoc/>
     public override void OnMouseUpClient(MouseEvent args, GuiElementMap mapElem)
     {
-        if (!Active)
+        if (Active && PinHandles(args, mapElem))
         {
             return;
         }
 
-        foreach (var comp in _components)
-        {
-            comp.OnMouseUpOnElement(args, mapElem);
-            if (args.Handled)
-            {
-                return;
-            }
-        }
-
-        foreach (var comp in TemporaryComponents())
-        {
-            comp.OnMouseUpOnElement(args, mapElem);
-            if (args.Handled)
-            {
-                return;
-            }
-        }
-
         if (args.Button == EnumMouseButton.Right)
         {
-            // The map dialog opens its "add waypoint" dialog right after this call returns.
+            // The map dialog opens its "add waypoint" dialog right after this call returns,
+            // whether or not this layer is shown.
             _capi?.Event.EnqueueMainThreadTask(MoveNewWaypointIntoCurrentDimension, "chart-waypoint-dimension");
         }
     }
@@ -149,6 +132,13 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
         DisposeOwnComponents();
         base.Dispose();
     }
+
+    /// <summary>
+    /// Rebuilds the filtered component list for the player's current dimension. Called
+    /// on server data, on map open, and by <see cref="ChartModSystem"/> when the player
+    /// transits to another dimension while the map (or minimap) is open.
+    /// </summary>
+    public void OnPlayerDimensionChanged() => RebuildFilteredComponents();
 
     /// <summary>
     /// The map dialog gives a new pin the overworld's height at the clicked column (the engine's
@@ -169,12 +159,20 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
         dialog.WorldPos.Y = WaypointDimension.InternalY(pos.Y, pos.Dimension);
     }
 
-    /// <summary>
-    /// Rebuilds the filtered component list for the player's current dimension. Called
-    /// on server data, on map open, and by <see cref="ChartModSystem"/> when the player
-    /// transits to another dimension while the map (or minimap) is open.
-    /// </summary>
-    public void OnPlayerDimensionChanged() => RebuildFilteredComponents();
+    /// <summary>Offers a mouse-up to the visible pins; true when one of them took it.</summary>
+    private bool PinHandles(MouseEvent args, GuiElementMap mapElem)
+    {
+        foreach (var comp in _components.Concat(TemporaryComponents()))
+        {
+            comp.OnMouseUpOnElement(args, mapElem);
+            if (args.Handled)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private void RebuildFilteredComponents()
     {
