@@ -316,12 +316,6 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
             if (!TrySamplePixel(mc, chunkSlices, numChunkSlices, scan, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
             {
-                if (usedFallback)
-                {
-                    // Nothing to draw: remembered, so the neighbours do not scan the column again.
-                    scan.Heights[ScannedIndex(cs, lx, lz)] = SurfaceScan.NotFound;
-                }
-
                 continue;
             }
 
@@ -345,11 +339,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 // is shaded from the scanned heights of its neighbours instead. Like vanilla, from
                 // the surface as found, before looking under the snow: a neighbour's height is
                 // its snow too, and a snow field must come out flat.
-                scan.Heights[ScannedIndex(cs, lx, lz)] = surfaceY;
-                b = Hillshade.Factor(
-                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, surfaceY),
-                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, surfaceY),
-                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, surfaceY));
+                b = ScannedRelief(scan, cs, cx, cz, lx, lz, surfaceY);
             }
 
             ApplyPixelColor(i, block, b, cs, cx, cz, lx, lz, y, chunkSlices, numChunkSlices, tintedImage, shadowMap);
@@ -458,6 +448,9 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         int x = (cx * cs) + lx;
         int z = (cz * cs) + lz;
         int found = ScanColumn(scan, x, z);
+
+        // Kept, found or not, for the relief of the pixels south and east of this one.
+        scan.Heights[ScannedIndex(cs, lx, lz)] = found;
         if (found == SurfaceScan.NotFound)
         {
             return false;
@@ -469,6 +462,16 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     }
 
     private static int ScannedIndex(int cs, int lx, int lz) => ((lz + 1) * (cs + 1)) + lx + 1;
+
+    /// <summary>
+    /// Relief of a scanned column, from how far its surface stands above or below the scanned
+    /// surfaces of its north-west, west and north neighbours: the vanilla rule, on scanned heights.
+    /// </summary>
+    private float ScannedRelief(ColumnScan scan, int cs, int cx, int cz, int lx, int lz, int surfaceY) =>
+        Hillshade.Factor(
+            surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, surfaceY),
+            surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, surfaceY),
+            surfaceY - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, surfaceY));
 
     /// <summary>
     /// Scanned height of the column at local (lx, lz), -1 allowed for the north and west
