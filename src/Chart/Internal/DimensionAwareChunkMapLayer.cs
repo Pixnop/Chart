@@ -27,8 +27,6 @@ namespace Chart.Internal;
 /// </summary>
 internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 {
-    private const int Unscanned = int.MinValue;
-
     // MapLayer.api is ICoreAPI; cache the client cast for all client operations.
     private readonly ICoreClientAPI? _capi;
 
@@ -294,27 +292,25 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         var shadowMap = new byte[pixCount];
         Array.Fill(shadowMap, (byte)128);
 
-        // Heights found by the column scan, with one extra row and column on the north and west
-        // sides for the relief shading of the tile's edge. Filled as the scan goes.
-        var scanned = new int[(cs + 1) * (cs + 1)];
-        Array.Fill(scanned, Unscanned);
-
         // A roofed dimension declares where its scan starts, and the store carries the value
         // its tiles are drawn with; otherwise the scan starts a little above the player.
         int playerY = (int)(_capi.World.Player?.Entity?.Pos.Y ?? 128.0);
         int? declaredTop = currentDim != 0 && store.ScanTop > 0 ? store.ScanTop : null;
-        var scan = new ColumnScan(
-            Top: Math.Min(mapSizeY - 1, declaredTop ?? (playerY + 64)),
-            SkipCeiling: declaredTop.HasValue,
-            TrustHeightMap: currentDim == 0,
-            Heights: scanned);
+        var scanned = new ScannedTile(
+            cs,
+            cx * cs,
+            cz * cs,
+            Math.Min(mapSizeY - 1, declaredTop ?? (playerY + 64)),
+            declaredTop.HasValue,
+            SurfaceIdAt);
+        bool trustHeightMap = currentDim == 0;
 
         for (int i = 0; i < pixCount; i++)
         {
             int lx = i % cs;
             int lz = i / cs;
 
-            if (!TrySamplePixel(mc, chunkSlices, numChunkSlices, scan, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
+            if (!TrySamplePixel(mc, chunkSlices, numChunkSlices, scanned, trustHeightMap, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
             {
                 continue;
             }
@@ -327,7 +323,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             {
                 b = ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
             }
-            else if (scan.TrustHeightMap)
+            else if (trustHeightMap)
             {
                 // An overworld column whose height map points at air: its neighbours' heights
                 // come from that same map, so no relief.
@@ -339,7 +335,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 // is shaded from the scanned heights of its neighbours instead. Like vanilla, from
                 // the surface as found, before looking under the snow: a neighbour's height is
                 // its snow too, and a snow field must come out flat.
-                b = ScannedRelief(scan, cs, cx, cz, lx, lz, surfaceY);
+                b = scanned.Relief(lx, lz, surfaceY);
             }
 
             ApplyPixelColor(i, block, b, cs, cx, cz, lx, lz, y, chunkSlices, numChunkSlices, tintedImage, shadowMap);
@@ -410,7 +406,8 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         IMapChunk mc,
         IWorldChunk[] slices,
         int numSlices,
-        ColumnScan scan,
+        ScannedTile scanned,
+        bool trustHeightMap,
         int cs,
         int cx,
         int cz,
@@ -424,7 +421,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         block = null!;
         y = 0;
 
-        if (scan.TrustHeightMap)
+        if (trustHeightMap)
         {
             y = mc.RainHeightMap[(lz * cs) + lx];
             int cy = y / cs;
@@ -445,56 +442,22 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         }
 
         usedFallback = true;
-        int x = (cx * cs) + lx;
-        int z = (cz * cs) + lz;
-        int found = ScanColumn(scan, x, z);
-
-        // Kept, found or not, for the relief of the pixels south and east of this one.
-        scan.Heights[ScannedIndex(cs, lx, lz)] = found;
+        int found = scanned.Scan(lx, lz);
         if (found == SurfaceScan.NotFound)
         {
             return false;
         }
 
         y = found;
-        block = SurfaceBlockAt(x, found, z);
+        block = SurfaceBlockAt((cx * cs) + lx, found, (cz * cs) + lz);
         return true;
     }
 
-    private static int ScannedIndex(int cs, int lx, int lz) => ((lz + 1) * (cs + 1)) + lx + 1;
-
     /// <summary>
-    /// Relief of a scanned column, from how far its surface stands above or below the scanned
-    /// surfaces of its north-west, west and north neighbours: the vanilla rule, on scanned heights.
+    /// Id of the surface block at a world position, 0 where nothing counts as one: what
+    /// <see cref="ScannedTile"/> scans.
     /// </summary>
-    private float ScannedRelief(ColumnScan scan, int cs, int cx, int cz, int lx, int lz, int surfaceY) =>
-        Hillshade.Factor(
-            surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, surfaceY),
-            surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, surfaceY),
-            surfaceY - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, surfaceY));
-
-    /// <summary>
-    /// Scanned height of the column at local (lx, lz), -1 allowed for the north and west
-    /// neighbours. A column with nothing to draw (void, or a chunk not loaded yet) reads as
-    /// <paramref name="fallback"/>, so it casts no relief.
-    /// </summary>
-    private int ScannedHeight(ColumnScan scan, int cs, int cx, int cz, int lx, int lz, int fallback)
-    {
-        ref int height = ref scan.Heights[ScannedIndex(cs, lx, lz)];
-        if (height == Unscanned)
-        {
-            height = ScanColumn(scan, (cx * cs) + lx, (cz * cs) + lz);
-        }
-
-        return height == SurfaceScan.NotFound ? fallback : height;
-    }
-
-    /// <summary>
-    /// Scans the column at world (x, z). A method of its own so that the closure is only
-    /// allocated for a real scan, not for every pixel of the callers.
-    /// </summary>
-    private int ScanColumn(ColumnScan scan, int x, int z) =>
-        SurfaceScan.Find(y => SurfaceBlockAt(x, y, z).Id, scan.Top, scan.SkipCeiling);
+    private int SurfaceIdAt(int x, int y, int z) => SurfaceBlockAt(x, y, z).Id;
 
     /// <summary>
     /// The block a column scan sees at a position, under the rule the engine builds its rain
@@ -856,10 +819,4 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         return pixels;
     }
-
-    /// <summary>
-    /// How the columns of one tile are scanned: where from, whether a ceiling is stepped through,
-    /// and the heights found so far.
-    /// </summary>
-    private readonly record struct ColumnScan(int Top, bool SkipCeiling, bool TrustHeightMap, int[] Heights);
 }
