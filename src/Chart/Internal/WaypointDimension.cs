@@ -14,10 +14,10 @@ internal static class WaypointDimension
 {
     /// <summary>
     /// Returns the dimension index encoded in a waypoint's Y coordinate: the slice of the world
-    /// the value is nearest to, not the one it falls in. A pin can sit under Y 0 of its dimension
-    /// (a death in the void is stored around y -35), which puts its Y just under that dimension's
-    /// slice. Worlds are at most 16384 blocks high, half a slice, so a real height always stays
-    /// nearest to its own dimension.
+    /// the value is nearest to, not the one it falls in. A pin can sit under Y 0 of its dimension:
+    /// the void starts to kill under y -30 and the death pin is stored where the fall ended,
+    /// which puts its Y just under that dimension's slice. Worlds are at most 16384 blocks high,
+    /// half a slice, so a real height always stays nearest to its own dimension.
     /// </summary>
     /// <param name="waypointY">The waypoint's stored (internal) Y.</param>
     /// <returns>The dimension index.</returns>

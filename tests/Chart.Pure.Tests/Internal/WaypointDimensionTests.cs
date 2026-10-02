@@ -42,8 +42,8 @@ public class WaypointDimensionTests
     [InlineData(-35.0, 10)]
     public void DimensionOf_Should_FindTheDimension_When_ThePinIsUnderItsY0(double y, int dimension)
     {
-        // A fall into the void kills around y -35, and the death pin is stored there: just
-        // under the dimension's own slice of the world.
+        // The void starts to kill under y -30 and the death pin is stored where the fall ended:
+        // just under the dimension's own slice of the world.
         Assert.Equal(dimension, WaypointDimension.DimensionOf(WaypointDimension.InternalY(y, dimension)));
     }
 
