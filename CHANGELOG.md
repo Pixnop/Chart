@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Solid custom dimensions were mapped from the overworld's height map.** Map chunks are not per dimension, so the height Chart read first was the overworld's surface at the same X/Z. In a void or skyblock dimension that height is air and the scan took over, which hid the problem; in a dimension filled with rock it landed on an arbitrary block inside the terrain or on its roof, and that block was drawn as the surface. Chart no longer reads the height map outside the overworld: custom dimensions are always scanned.
 
 ### Changed
+- **Custom dimensions are mapped by the rule of the engine's height map.** The column scan took the first block that was not air, so tall grass, torches and signs showed as specks and seagrass hid the water over it. It now picks what the overworld map picks: a fluid counts before the solid block it shares a position with, and a block that lets rain through is skipped.
 - **Requires Manifold 0.6.0 or later**, the first release that sends dimension metadata to clients; the scan hint above travels that way.
 - The scenarios run against the Manifold 0.6.0 release, with a roofed fixture dimension that Chart's own scan is run over, and assert that the hint is in the manifest a joining player receives.
 - Atlas test harness bumped to 0.16.0-rc.1.

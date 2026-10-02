@@ -12,10 +12,13 @@ internal static class SurfaceScan
     public const int NotFound = -1;
 
     /// <summary>
-    /// Scans down from <paramref name="scanTop"/> to y = 1 and returns the Y of the first
-    /// non-air block, or <see cref="NotFound"/>.
+    /// Scans down from <paramref name="scanTop"/> to y = 1 and returns the Y of the first block
+    /// that counts as a surface, or <see cref="NotFound"/>.
     /// </summary>
-    /// <param name="blockIdAt">Block id at a given Y of the column, 0 for air.</param>
+    /// <param name="blockIdAt">
+    /// Block id at a given Y of the column, 0 where nothing counts as a surface: air, or a block
+    /// the caller sees through.
+    /// </param>
     /// <param name="scanTop">The Y the scan starts at.</param>
     /// <param name="skipCeiling">
     /// When true and the scan starts inside solid blocks, that run is the dimension's ceiling

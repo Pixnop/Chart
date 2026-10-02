@@ -30,8 +30,8 @@ surface the same way any third-party mod would.
 ## For dimension authors
 
 Chart needs nothing from your mod: any Manifold dimension gets its own map. One hint is worth
-setting if your dimension has a roof. The map draws the first block it meets scanning down, so
-a roofed dimension shows its roof. Declare where the scan starts and Chart steps through the
+setting if your dimension has a roof. The map draws the first block rain would stop on, scanning
+down, so a roofed dimension shows its roof. Declare where the scan starts and Chart steps through the
 ceiling it starts in, then draws the cavern floor:
 
 ```csharp
