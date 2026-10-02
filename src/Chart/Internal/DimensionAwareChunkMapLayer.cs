@@ -460,16 +460,13 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     private int SurfaceIdAt(int x, int y, int z) => SurfaceBlockAt(x, y, z).Id;
 
     /// <summary>
-    /// The block a column scan sees at a position, under the rule the engine builds its rain
-    /// height map with: a fluid counts before the solid block it shares the position with, and
-    /// a block that lets rain through (tall grass, a torch, a sign) is not there at all. A
-    /// scanned dimension is then mapped like the overworld.
+    /// The block a column scan sees at a world position of the current dimension, under
+    /// <see cref="SurfaceRule"/>.
     /// </summary>
     private Block SurfaceBlockAt(int x, int y, int z)
     {
         _samplePos!.Set(x, y, z);
-        var block = _capi!.World.BlockAccessor.GetBlock(_samplePos, BlockLayersAccess.FluidOrSolid);
-        return block is null || block.RainPermeable ? _capi.World.Blocks[0] : block;
+        return SurfaceRule.BlockAt(_capi!.World.BlockAccessor, _samplePos, _capi.World.Blocks[0]);
     }
 
     /// <summary>
