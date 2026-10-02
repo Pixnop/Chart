@@ -43,6 +43,47 @@ public sealed class SurfaceScanTests
     }
 
     [Fact]
+    public void Find_Should_ReturnTheRoof_When_TheScanStartsInTheAirAboveIt()
+    {
+        Assert.Equal(112, SurfaceScan.Find(Cavern, scanTop: 128, skipCeiling: true));
+    }
+
+    [Fact]
+    public void Find_Should_ReturnNotFound_When_NothingLiesUnderTheCeiling()
+    {
+        static int RoofOverVoid(int y) => y >= 110 && y <= 112 ? 7 : 0;
+
+        Assert.Equal(SurfaceScan.NotFound, SurfaceScan.Find(RoofOverVoid, scanTop: 111, skipCeiling: true));
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(0, false)]
+    [InlineData(-5, true)]
+    [InlineData(-5, false)]
+    public void Find_Should_ReturnNotFoundWithoutReading_When_TheScanTopIsNotAboveZero(int scanTop, bool skipCeiling)
+    {
+        int reads = 0;
+
+        int found = SurfaceScan.Find(_ => { reads++; return 7; }, scanTop, skipCeiling);
+
+        Assert.Equal(SurfaceScan.NotFound, found);
+        Assert.Equal(0, reads);
+    }
+
+    [Theory]
+    [InlineData(111)] // starts inside the roof
+    [InlineData(109)] // starts in the air under it
+    public void Find_Should_ReadEachBlockOnce(int scanTop)
+    {
+        var read = new List<int>();
+
+        SurfaceScan.Find(y => { read.Add(y); return Cavern(y); }, scanTop, skipCeiling: true);
+
+        Assert.Equal(read.Distinct().Count(), read.Count);
+    }
+
+    [Fact]
     public void Find_Should_NeverReadBelowYOne()
     {
         int lowest = int.MaxValue;

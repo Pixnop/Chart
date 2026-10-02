@@ -17,7 +17,8 @@ namespace Chart.Internal;
 ///
 /// Vanilla rendering pipeline (default / non-colorAccurate path):
 /// 1. Fixed 13-colour material palette (see <see cref="VanillaMapPalette"/>).
-/// 2. Surface height from <c>IMapChunk.RainHeightMap</c>; fallback scan for custom dims.
+/// 2. Surface height from <c>IMapChunk.RainHeightMap</c> in the overworld; outside it every
+///    column is scanned (see <see cref="SurfaceScan"/>), the height map being the overworld's.
 /// 3. Block lookup via <c>IWorldChunk.UnpackAndReadBlock(FluidOrSolid)</c>.
 /// 4. Snow skip: if the top block is snow, sample Y-1 for the real terrain.
 /// 5. Water/ice edge: if a lake pixel has any non-lake cardinal neighbour, paint it as "wateredge".
@@ -315,6 +316,12 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
             if (!TrySamplePixel(mc, chunkSlices, numChunkSlices, scan, cs, cx, cz, lx, lz, out int y, out var block, out bool usedFallback))
             {
+                if (usedFallback)
+                {
+                    // Nothing to draw: remembered, so the neighbours do not scan the column again.
+                    scan.Heights[ScannedIndex(cs, lx, lz)] = SurfaceScan.NotFound;
+                }
+
                 continue;
             }
 
@@ -450,7 +457,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         usedFallback = true;
         int x = (cx * cs) + lx;
         int z = (cz * cs) + lz;
-        int found = SurfaceScan.Find(yy => SurfaceBlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
+        int found = ScanColumn(scan, x, z);
         if (found == SurfaceScan.NotFound)
         {
             return false;
@@ -473,13 +480,18 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         ref int height = ref scan.Heights[ScannedIndex(cs, lx, lz)];
         if (height == Unscanned)
         {
-            int x = (cx * cs) + lx;
-            int z = (cz * cs) + lz;
-            height = SurfaceScan.Find(yy => SurfaceBlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
+            height = ScanColumn(scan, (cx * cs) + lx, (cz * cs) + lz);
         }
 
         return height == SurfaceScan.NotFound ? fallback : height;
     }
+
+    /// <summary>
+    /// Scans the column at world (x, z). A method of its own so that the closure is only
+    /// allocated for a real scan, not for every pixel of the callers.
+    /// </summary>
+    private int ScanColumn(ColumnScan scan, int x, int z) =>
+        SurfaceScan.Find(y => SurfaceBlockAt(x, y, z).Id, scan.Top, scan.SkipCeiling);
 
     /// <summary>
     /// The block a column scan sees at a position, under the rule the engine builds its rain
