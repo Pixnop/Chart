@@ -121,7 +121,8 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
         if (args.Button == EnumMouseButton.Right)
         {
             // The map dialog opens its "add waypoint" dialog right after this call returns,
-            // whether or not this layer is shown.
+            // whether or not this layer is shown (unless a later layer takes the click: the
+            // task then finds no dialog).
             _capi?.Event.EnqueueMainThreadTask(MoveNewWaypointIntoCurrentDimension, "chart-waypoint-dimension");
         }
     }
