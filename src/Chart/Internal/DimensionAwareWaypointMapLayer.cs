@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using Vintagestory.API.Client;
@@ -112,27 +113,17 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
     /// <inheritdoc/>
     public override void OnMouseUpClient(MouseEvent args, GuiElementMap mapElem)
     {
-        if (!Active)
+        if (Active && PinHandles(args, mapElem))
         {
             return;
         }
 
-        foreach (var comp in _components)
+        if (args.Button == EnumMouseButton.Right)
         {
-            comp.OnMouseUpOnElement(args, mapElem);
-            if (args.Handled)
-            {
-                return;
-            }
-        }
-
-        foreach (var comp in TemporaryComponents())
-        {
-            comp.OnMouseUpOnElement(args, mapElem);
-            if (args.Handled)
-            {
-                return;
-            }
+            // The map dialog opens its "add waypoint" dialog right after this call returns,
+            // whether or not this layer is shown (unless a later layer takes the click: the
+            // task then finds no dialog).
+            _capi?.Event.EnqueueMainThreadTask(MoveNewWaypointIntoCurrentDimension, "chart-waypoint-dimension");
         }
     }
 
@@ -149,6 +140,40 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
     /// transits to another dimension while the map (or minimap) is open.
     /// </summary>
     public void OnPlayerDimensionChanged() => RebuildFilteredComponents();
+
+    /// <summary>
+    /// The map dialog gives a new pin the overworld's height at the clicked column (the engine's
+    /// height map is not per dimension) and no dimension, so a pin placed from the map inside a
+    /// custom dimension would be stored in the overworld and filtered out at once. The player's
+    /// own height is used instead: unlike the clicked column, it is always loaded and inside
+    /// the dimension.
+    /// </summary>
+    private void MoveNewWaypointIntoCurrentDimension()
+    {
+        var pos = EntityPosAccess.PosOrNull(_capi?.World.Player?.Entity);
+        var dialog = _capi?.Gui.OpenedGuis.OfType<GuiDialogAddWayPoint>().FirstOrDefault();
+        if (pos is null || pos.Dimension == 0 || dialog?.WorldPos is null)
+        {
+            return;
+        }
+
+        dialog.WorldPos.Y = WaypointDimension.InternalY(pos.Y, pos.Dimension);
+    }
+
+    /// <summary>Offers a mouse-up to the visible pins; true when one of them took it.</summary>
+    private bool PinHandles(MouseEvent args, GuiElementMap mapElem)
+    {
+        foreach (var comp in _components.Concat(TemporaryComponents()))
+        {
+            comp.OnMouseUpOnElement(args, mapElem);
+            if (args.Handled)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private void RebuildFilteredComponents()
     {

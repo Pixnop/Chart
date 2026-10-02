@@ -50,6 +50,11 @@ requires 0.6.1). `chartScanTopY`, the key Rift Traveler shipped first, is read t
 Change the value and the dimension is mapped again: Chart drops the tiles it drew from another
 scan top, including the ones it drew before it read the hint at all.
 
+If your mod adds waypoints itself (`/waypoint addat` or `addati` with an explicit position),
+give them the internal Y, `y + dimension * 32768` (`BlockPos.InternalY`, `EntityPos.InternalY`).
+That is what the game stores for a pin made with `/waypoint add`, and it is how Chart knows
+which dimension's map a pin belongs on. A pin stored with a plain Y lands on the overworld map.
+
 ## Build
 
 Requires the .NET 10 SDK and a Vintage Story install. Set the `VINTAGE_STORY` environment

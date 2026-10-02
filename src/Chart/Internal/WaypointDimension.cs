@@ -1,3 +1,4 @@
+using System;
 using Vintagestory.API.MathTools;
 
 namespace Chart.Internal;
@@ -11,10 +12,25 @@ namespace Chart.Internal;
 /// </summary>
 internal static class WaypointDimension
 {
-    /// <summary>Returns the dimension index encoded in a waypoint's Y coordinate.</summary>
+    /// <summary>
+    /// Returns the dimension index encoded in a waypoint's Y coordinate: the slice of the world
+    /// the value is nearest to, not the one it falls in. A pin can sit under Y 0 of its dimension:
+    /// the void starts to kill under y -30 and the death pin is stored where the fall ended,
+    /// which puts its Y just under that dimension's slice. Worlds are at most 16384 blocks high,
+    /// half a slice, so a real height always stays nearest to its own dimension.
+    /// </summary>
     /// <param name="waypointY">The waypoint's stored (internal) Y.</param>
-    /// <returns>The dimension index; 0 for overworld heights, including slightly negative Y.</returns>
-    public static int DimensionOf(double waypointY) => (int)(waypointY / BlockPos.DimensionBoundary);
+    /// <returns>The dimension index.</returns>
+    public static int DimensionOf(double waypointY) => (int)Math.Round(waypointY / BlockPos.DimensionBoundary);
+
+    /// <summary>
+    /// The Y to store for a waypoint at height <paramref name="y"/> of a dimension, so that
+    /// <see cref="DimensionOf"/> finds the dimension again.
+    /// </summary>
+    /// <param name="y">Height inside the dimension.</param>
+    /// <param name="dimension">The dimension index.</param>
+    /// <returns>The internal Y.</returns>
+    public static double InternalY(double y, int dimension) => y + ((double)dimension * BlockPos.DimensionBoundary);
 
     /// <summary>Whether a waypoint pin belongs on the map of the given dimension.</summary>
     /// <param name="waypointY">The waypoint's stored (internal) Y.</param>
