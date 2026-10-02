@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-02
+
 ### Added
 - **Cavern maps for roofed dimensions.** A dimension's owner mod can declare where the map's surface scan starts with the `chart:scanTopY` metadata (an integer Y, set through Manifold's `WithMetadata`). Chart steps through the ceiling the scan starts in and draws the floor under it, so a roofed dimension shows its caverns instead of a uniform roof; a column solid all the way down is drawn as a wall. `chartScanTopY`, the key Rift Traveler already ships, is read as well. A map already on disk for such a dimension is redrawn: tiles drawn from another scan top, or before Chart read the hint, are dropped when the player enters the dimension.
 - **Relief shading in custom dimensions.** The vanilla hillshade compares a pixel with its neighbours in the height map, which Chart cannot use outside the overworld, so custom dimensions were drawn flat. The same shading is now computed from the heights the column scan finds, including across tile edges. As in vanilla, the height that counts is the surface as found, snow included, so a snow field comes out flat.
