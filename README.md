@@ -41,10 +41,11 @@ manifold.Registry.Define(code)
     .RegisterStatic();
 ```
 
-The value is an integer Y. A column that is solid from that Y all the way down is drawn as a
-wall. The hint reaches clients through Manifold's metadata replication, so it needs Manifold
-0.6.0 or later on the server; with an older Manifold the dimension is mapped as if it had no
-hint. `chartScanTopY`, the key Rift Traveler shipped first, is read too.
+The value is an integer Y. The ceiling is the unbroken run of blocks the scan starts in: a
+column that is solid from that Y all the way down is drawn as a wall, a column with nothing
+under its ceiling is left black like the void, and a Y above the roof maps the roof. The hint
+reaches clients through Manifold's metadata replication, new in Manifold 0.6.0, which is why
+Chart requires that version. `chartScanTopY`, the key Rift Traveler shipped first, is read too.
 
 Change the value and the dimension is mapped again: Chart drops the tiles it drew from another
 scan top, including the ones it drew before it read the hint at all.
@@ -81,8 +82,9 @@ dotnet test tests/Chart.Scenarios
 Boots a headless Vintage Story server through [Atlas](https://github.com/Pixnop/Atlas),
 with the published Manifold release zip staged as a real mod, and pins the engine and
 Manifold contracts Chart's renderer is built on (the overworld-only RainHeightMap, dim-encoded
-chunk slice reads, the cavern scan over a real roofed dimension, dimension destroy events). Chart itself is a client-only mod and does
-not load in that server; rendering is validated visually in game.
+chunk slice reads, the cavern scan over a real roofed dimension, the scan hint sent to a
+joining player, dimension destroy events). Chart itself is a client-only mod and does not load
+in that server; rendering is validated visually in game.
 
 ## Package
 
