@@ -50,6 +50,9 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     // Reused BlockPos to avoid per-column allocation during sampling.
     private BlockPos? _samplePos;
 
+    // The air block, looked up once: the column scan asks for it at every block it reads.
+    private Block? _air;
+
     // Chunk size (typically 32). Cached once in OnLoaded.
     private int _chunkSize;
 
@@ -94,6 +97,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 
         // Dimension 0 is the overworld; the actual dimension is set each ProcessChunk call.
         _samplePos = new BlockPos(0);
+        _air = _capi.World.Blocks[0];
 
         // Build the vanilla material palette from the full block registry.
         _palette.Build(_capi.World.Blocks);
@@ -466,7 +470,7 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     private Block SurfaceBlockAt(int x, int y, int z)
     {
         _samplePos!.Set(x, y, z);
-        return SurfaceRule.BlockAt(_capi!.World.BlockAccessor, _samplePos, _capi.World.Blocks[0]);
+        return SurfaceRule.BlockAt(_capi!.World.BlockAccessor, _samplePos, _air!);
     }
 
     /// <summary>
