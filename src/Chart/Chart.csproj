@@ -28,7 +28,7 @@
       ExcludeAssets=runtime keeps Manifold.dll out of Chart's build output / mod zip;
       at runtime the Manifold mod (see modinfo.json dependencies) provides it.
     -->
-    <PackageReference Include="Pixnop.Manifold" Version="0.6.0">
+    <PackageReference Include="Pixnop.Manifold" Version="0.6.1">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
   </ItemGroup>
