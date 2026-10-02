@@ -42,6 +42,9 @@ internal static class SurfaceScan
             {
                 return scanTop > 0 ? scanTop : NotFound;
             }
+
+            // The block that ended the ceiling is known to be empty.
+            y--;
         }
 
         for (; y > 0; y--)

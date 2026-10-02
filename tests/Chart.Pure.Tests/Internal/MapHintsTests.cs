@@ -35,6 +35,26 @@ public sealed class MapHintsTests
     {
         Assert.Equal(111, MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, 111L))));
         Assert.Equal(111, MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, (short)111))));
+        Assert.Equal(111, MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, (byte)111))));
+        Assert.Equal(111, MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, (sbyte)111))));
+        Assert.Equal(111, MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, (ushort)111))));
+        Assert.Equal(111, MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, 111u))));
+        Assert.Equal(111, MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, 111UL))));
+    }
+
+    [Fact]
+    public void ScanTopY_Should_BeNull_When_TheValueDoesNotFitAnInt()
+    {
+        Assert.Null(MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, 5_000_000_000L))));
+        Assert.Null(MapHints.ScanTopY(DimensionWith((MapHints.ScanTopKey, ulong.MaxValue))));
+    }
+
+    [Fact]
+    public void ScanTopY_Should_FallBackToTheLegacyKey_When_TheNamespacedValueIsUnusable()
+    {
+        var dimension = DimensionWith((MapHints.ScanTopKey, "oops"), (MapHints.LegacyScanTopKey, 111));
+
+        Assert.Equal(111, MapHints.ScanTopY(dimension));
     }
 
     [Theory]

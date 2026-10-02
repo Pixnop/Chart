@@ -21,25 +21,27 @@ internal static class MapHints
     /// The scan top a dimension declares, or null when it declares none (or a value that is not
     /// a positive integer).
     /// </summary>
-    public static int? ScanTopY(IDimension? dimension)
+    public static int? ScanTopY(IDimension? dimension) =>
+        dimension is null ? null : Read(dimension, ScanTopKey) ?? Read(dimension, LegacyScanTopKey);
+
+    private static int? Read(IDimension dimension, string key)
     {
-        if (dimension is null)
+        if (!dimension.Metadata.TryGetValue(key, out object? value))
         {
             return null;
         }
 
-        if (!dimension.Metadata.TryGetValue(ScanTopKey, out object? value)
-            && !dimension.Metadata.TryGetValue(LegacyScanTopKey, out value))
-        {
-            return null;
-        }
-
+        // Manifold hands the value back with the integer type the owner mod declared it with.
         long? y = value switch
         {
             int i => i,
             long l => l,
             short s => s,
             byte b => b,
+            sbyte sb => sb,
+            ushort us => us,
+            uint ui => ui,
+            ulong ul when ul <= int.MaxValue => (long)ul,
             _ => null,
         };
         return y is > 0 and <= int.MaxValue ? (int)y : null;
