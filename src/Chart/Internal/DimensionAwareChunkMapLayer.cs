@@ -29,6 +29,8 @@ namespace Chart.Internal;
 /// </summary>
 internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
 {
+    private const int Unscanned = int.MinValue;
+
     // MapLayer.api is ICoreAPI; cache the client cast for all client operations.
     private readonly ICoreClientAPI? _capi;
 
@@ -306,7 +308,8 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         var scan = new ColumnScan(
             Top: Math.Min(mapSizeY - 1, declaredTop ?? (playerY + 64)),
             SkipCeiling: declaredTop.HasValue,
-            TrustHeightMap: currentDim == 0);
+            TrustHeightMap: currentDim == 0,
+            Heights: scanned);
 
         for (int i = 0; i < pixCount; i++)
         {
@@ -325,11 +328,11 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
             float b;
             if (usedFallback)
             {
-                scanned[ScannedIndex(cs, lx, lz)] = y;
+                scan.Heights[ScannedIndex(cs, lx, lz)] = y;
                 b = Hillshade.Factor(
-                    y - ScannedHeight(scanned, scan, cs, cx, cz, lx - 1, lz - 1, y),
-                    y - ScannedHeight(scanned, scan, cs, cx, cz, lx - 1, lz, y),
-                    y - ScannedHeight(scanned, scan, cs, cx, cz, lx, lz - 1, y));
+                    y - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, y),
+                    y - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, y),
+                    y - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, y));
             }
             else
             {
@@ -459,9 +462,9 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
     /// neighbours. A column with nothing to draw (void, or a chunk not loaded yet) reads as
     /// <paramref name="fallback"/>, so it casts no relief.
     /// </summary>
-    private int ScannedHeight(int[] scanned, ColumnScan scan, int cs, int cx, int cz, int lx, int lz, int fallback)
+    private int ScannedHeight(ColumnScan scan, int cs, int cx, int cz, int lx, int lz, int fallback)
     {
-        ref int height = ref scanned[ScannedIndex(cs, lx, lz)];
+        ref int height = ref scan.Heights[ScannedIndex(cs, lx, lz)];
         if (height == Unscanned)
         {
             int x = (cx * cs) + lx;
@@ -840,8 +843,9 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         return pixels;
     }
 
-    /// <summary>How one column is scanned: where from, and whether a ceiling is stepped through.</summary>
-    private const int Unscanned = int.MinValue;
-
-    private readonly record struct ColumnScan(int Top, bool SkipCeiling, bool TrustHeightMap);
+    /// <summary>
+    /// How the columns of one tile are scanned: where from, whether a ceiling is stepped through,
+    /// and the heights found so far.
+    /// </summary>
+    private readonly record struct ColumnScan(int Top, bool SkipCeiling, bool TrustHeightMap, int[] Heights);
 }
