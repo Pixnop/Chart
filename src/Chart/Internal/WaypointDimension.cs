@@ -16,6 +16,15 @@ internal static class WaypointDimension
     /// <returns>The dimension index; 0 for overworld heights, including slightly negative Y.</returns>
     public static int DimensionOf(double waypointY) => (int)(waypointY / BlockPos.DimensionBoundary);
 
+    /// <summary>
+    /// The Y to store for a waypoint at height <paramref name="y"/> of a dimension, so that
+    /// <see cref="DimensionOf"/> finds the dimension again.
+    /// </summary>
+    /// <param name="y">Height inside the dimension.</param>
+    /// <param name="dimension">The dimension index.</param>
+    /// <returns>The internal Y.</returns>
+    public static double InternalY(double y, int dimension) => y + ((double)dimension * BlockPos.DimensionBoundary);
+
     /// <summary>Whether a waypoint pin belongs on the map of the given dimension.</summary>
     /// <param name="waypointY">The waypoint's stored (internal) Y.</param>
     /// <param name="dimension">The player's current dimension index.</param>

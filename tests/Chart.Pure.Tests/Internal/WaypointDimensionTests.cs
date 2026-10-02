@@ -44,4 +44,16 @@ public class WaypointDimensionTests
     {
         Assert.Equal(expected, WaypointDimension.IsVisibleIn(waypointY, currentDim));
     }
+
+    [Theory]
+    [InlineData(3.0, 0)]
+    [InlineData(3.0, 10)]
+    [InlineData(250.5, 1)]
+    public void InternalY_RoundTripsThroughDimensionOf(double y, int dimension)
+    {
+        double stored = WaypointDimension.InternalY(y, dimension);
+
+        Assert.Equal(dimension, WaypointDimension.DimensionOf(stored));
+        Assert.Equal(y, stored - (dimension * 32768.0));
+    }
 }

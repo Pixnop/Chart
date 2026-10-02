@@ -74,6 +74,31 @@ public class WaypointScenarios : ChartScenarioBase
         Assert.Equal(new[] { "overworld-pin" }, LatestWaypoints(player).Select(w => w.Title));
     }
 
+    /// <summary>
+    /// The map's "add waypoint" dialog sends <c>/waypoint addati</c> with an explicit position,
+    /// and the Y it computes is an overworld height with no dimension in it. Chart rewrites that
+    /// Y before the dialog sends; this replays the dialog's command with the Y Chart produces
+    /// and checks the server stores it as given, so the pin lands in the player's dimension.
+    /// The rewrite of the dialog itself is client-side and not covered.
+    /// </summary>
+    [AtlasScenario]
+    public async Task MapDialogWaypoint_Should_LandInThePlayersDimension_When_SentWithChartsInternalY()
+    {
+        int slabId = await DimensionId("slab");
+        ITestPlayer player = await World.JoinPlayer("chart_wpdialog");
+        await SendTo(player, "slab", slabId);
+
+        double y = WaypointDimension.InternalY(player.Position.Y, slabId);
+        CommandResult added = await player.ExecuteCommand(
+            FormattableString.Invariant($"/waypoint addati circle ={SpawnX} ={y} ={SpawnZ} false #3fa7d6 map-pin"));
+        Assert.True(added.Ok, added.Message);
+        await World.Ticks(2);
+
+        Waypoint pin = Assert.Single(LatestWaypoints(player));
+        Assert.Equal(slabId, WaypointDimension.DimensionOf(pin.Position.Y));
+        Assert.Equal(y, pin.Position.Y);
+    }
+
     private static IEnumerable<int> VisibleIndices(List<Waypoint> waypoints, int dimension) =>
         Enumerable.Range(0, waypoints.Count)
             .Where(i => WaypointDimension.IsVisibleIn(waypoints[i].Position.Y, dimension));

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
@@ -134,6 +135,12 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
                 return;
             }
         }
+
+        if (args.Button == EnumMouseButton.Right)
+        {
+            // The map dialog opens its "add waypoint" dialog right after this call returns.
+            _capi?.Event.EnqueueMainThreadTask(MoveNewWaypointIntoCurrentDimension, "chart-waypoint-dimension");
+        }
     }
 
     /// <inheritdoc/>
@@ -141,6 +148,25 @@ public class DimensionAwareWaypointMapLayer : WaypointMapLayer
     {
         DisposeOwnComponents();
         base.Dispose();
+    }
+
+    /// <summary>
+    /// The map dialog gives a new pin the overworld's height at the clicked column (the engine's
+    /// height map is not per dimension) and no dimension, so a pin placed from the map inside a
+    /// custom dimension would be stored in the overworld and filtered out at once. The player's
+    /// own height is used instead: unlike the clicked column, it is always loaded and inside
+    /// the dimension.
+    /// </summary>
+    private void MoveNewWaypointIntoCurrentDimension()
+    {
+        var pos = EntityPosAccess.PosOrNull(_capi?.World.Player?.Entity);
+        var dialog = _capi?.Gui.OpenedGuis.OfType<GuiDialogAddWayPoint>().FirstOrDefault();
+        if (pos is null || pos.Dimension == 0 || dialog?.WorldPos is null)
+        {
+            return;
+        }
+
+        dialog.WorldPos.Y = WaypointDimension.InternalY(pos.Y, pos.Dimension);
     }
 
     /// <summary>
