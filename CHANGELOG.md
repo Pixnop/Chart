@@ -9,13 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Cavern maps for roofed dimensions.** A dimension's owner mod can declare where the map's surface scan starts with the `chart:scanTopY` metadata (an integer Y, set through Manifold's `WithMetadata`). Chart steps through the ceiling the scan starts in and draws the floor under it, so a roofed dimension shows its caverns instead of a uniform roof; a column solid all the way down is drawn as a wall. `chartScanTopY`, the key Rift Traveler already ships, is read as well. A map already on disk for such a dimension is redrawn: tiles drawn from another scan top, or before Chart read the hint, are dropped when the player enters the dimension.
-- **Relief shading in custom dimensions.** The vanilla hillshade compares a pixel with its neighbours in the height map, which Chart cannot use outside the overworld, so custom dimensions were drawn flat. The same shading is now computed from the heights the column scan finds, including across tile edges.
+- **Relief shading in custom dimensions.** The vanilla hillshade compares a pixel with its neighbours in the height map, which Chart cannot use outside the overworld, so custom dimensions were drawn flat. The same shading is now computed from the heights the column scan finds, including across tile edges. As in vanilla, the height that counts is the surface as found, snow included, so a snow field comes out flat.
 
 ### Fixed
 - **Solid custom dimensions were mapped from the overworld's height map.** Map chunks are not per dimension, so the height Chart read first was the overworld's surface at the same X/Z. In a void or skyblock dimension that height is air and the scan took over, which hid the problem; in a dimension filled with rock it landed on an arbitrary block inside the terrain or on its roof, and that block was drawn as the surface. Chart no longer reads the height map outside the overworld: custom dimensions are always scanned.
 - **A waypoint added from the map inside a custom dimension never showed up.** The map dialog gives a new pin the overworld's height at the clicked column and no dimension, so the pin was stored in the overworld and Chart filtered it out at once. Chart now moves the pin into the player's dimension, at the player's height, before the dialog sends it. Pins made with `/waypoint add` were not affected.
 
 ### Changed
+- **Custom dimensions are mapped by the rule of the engine's height map.** The column scan took the first block that was not air, so tall grass, torches and signs showed as specks and seagrass hid the water over it. It now picks what the overworld map picks: a fluid counts before the solid block it shares a position with, and a block that lets rain through is skipped.
 - **Requires Manifold 0.6.0 or later**, the first release that sends dimension metadata to clients; the scan hint above travels that way.
 - The scenarios run against the Manifold 0.6.0 release, with a roofed fixture dimension that Chart's own scan is run over, and assert that the hint is in the manifest a joining player receives.
 - Atlas test harness bumped to 0.16.0-rc.1.

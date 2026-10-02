@@ -318,22 +318,31 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
                 continue;
             }
 
+            int surfaceY = y;
             PeekDownThroughSnow(chunkSlices, numChunkSlices, cs, lx, lz, ref y, ref block);
 
-            // The height map holds overworld values, useless for a scanned column: its relief
-            // is shaded from the scanned heights of its neighbours instead.
             float b;
-            if (usedFallback)
+            if (!usedFallback)
             {
-                scan.Heights[ScannedIndex(cs, lx, lz)] = y;
-                b = Hillshade.Factor(
-                    y - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, y),
-                    y - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, y),
-                    y - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, y));
+                b = ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
+            }
+            else if (scan.TrustHeightMap)
+            {
+                // An overworld column whose height map points at air: its neighbours' heights
+                // come from that same map, so no relief.
+                b = 1f;
             }
             else
             {
-                b = ComputeShadowFactor(mc, mcNW, mcN, mcW, cs, lx, lz, y);
+                // The height map holds overworld values, useless for a scanned column: its relief
+                // is shaded from the scanned heights of its neighbours instead. Like vanilla, from
+                // the surface as found, before looking under the snow: a neighbour's height is
+                // its snow too, and a snow field must come out flat.
+                scan.Heights[ScannedIndex(cs, lx, lz)] = surfaceY;
+                b = Hillshade.Factor(
+                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz - 1, surfaceY),
+                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx - 1, lz, surfaceY),
+                    surfaceY - ScannedHeight(scan, cs, cx, cz, lx, lz - 1, surfaceY));
             }
 
             ApplyPixelColor(i, block, b, cs, cx, cz, lx, lz, y, chunkSlices, numChunkSlices, tintedImage, shadowMap);
@@ -441,14 +450,14 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         usedFallback = true;
         int x = (cx * cs) + lx;
         int z = (cz * cs) + lz;
-        int found = SurfaceScan.Find(yy => BlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
+        int found = SurfaceScan.Find(yy => SurfaceBlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
         if (found == SurfaceScan.NotFound)
         {
             return false;
         }
 
         y = found;
-        block = BlockAt(x, found, z);
+        block = SurfaceBlockAt(x, found, z);
         return true;
     }
 
@@ -466,16 +475,23 @@ internal sealed class DimensionAwareChunkMapLayer : RGBMapLayer
         {
             int x = (cx * cs) + lx;
             int z = (cz * cs) + lz;
-            height = SurfaceScan.Find(yy => BlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
+            height = SurfaceScan.Find(yy => SurfaceBlockAt(x, yy, z).Id, scan.Top, scan.SkipCeiling);
         }
 
         return height == SurfaceScan.NotFound ? fallback : height;
     }
 
-    private Block BlockAt(int x, int y, int z)
+    /// <summary>
+    /// The block a column scan sees at a position, under the rule the engine builds its rain
+    /// height map with: a fluid counts before the solid block it shares the position with, and
+    /// a block that lets rain through (tall grass, a torch, a sign) is not there at all. A
+    /// scanned dimension is then mapped like the overworld.
+    /// </summary>
+    private Block SurfaceBlockAt(int x, int y, int z)
     {
         _samplePos!.Set(x, y, z);
-        return _capi!.World.BlockAccessor.GetBlock(_samplePos) ?? _capi.World.Blocks[0];
+        var block = _capi!.World.BlockAccessor.GetBlock(_samplePos, BlockLayersAccess.FluidOrSolid);
+        return block is null || block.RainPermeable ? _capi.World.Blocks[0] : block;
     }
 
     /// <summary>
