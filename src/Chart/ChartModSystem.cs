@@ -65,22 +65,27 @@ public sealed class ChartModSystem : ModSystem
 
         var mapManager = api.ModLoader.GetModSystem<WorldMapManager>();
 
-        // Position 0.5 places this layer between the terrain layer (0.0) and marker layers (1.0).
-        mapManager.RegisterMapLayer<DimensionAwareChunkMapLayer>("chart", 0.5);
-        api.Logger.Notification("[Chart] Registered DimensionAwareChunkMapLayer.");
+        // Both vanilla layers are replaced by registering our TYPES under their codes before
+        // WorldMapManager instantiates layers at LevelFinalize: re-registering a code overwrites
+        // its registry entry, so the vanilla layer is never created on the client.
+        //
+        // For the terrain layer that is a requirement, not a nicety. The vanilla layer opens the
+        // savegame's map database in its constructor, and only the manager's LeaveWorld handler
+        // closes it, for the layers still in its list. Created and then taken out of the list,
+        // it kept the database open: the next world loaded in the same client session could not
+        // open it, no layer was created at all and opening the map crashed.
+        mapManager.RegisterMapLayer<DimensionAwareChunkMapLayer>("chunks", 0.0);
+        api.Logger.Notification("[Chart] Registered DimensionAwareChunkMapLayer (replaces vanilla terrain layer).");
 
-        // Replace the vanilla waypoint layer TYPE under its own "waypoints" code before
-        // WorldMapManager instantiates layers at LevelFinalize. Re-registering overwrites the
-        // registry entry, so the vanilla WaypointMapLayer is never created client-side, while
-        // the server keeps the vanilla layer and its data still routes to ours through the
-        // shared "waypoints" code.
+        // The server keeps the vanilla waypoint layer and its data still routes to ours through
+        // the shared "waypoints" code.
         mapManager.RegisterMapLayer<DimensionAwareWaypointMapLayer>("waypoints", 1.0);
         api.Logger.Notification("[Chart] Registered DimensionAwareWaypointMapLayer (replaces vanilla waypoints layer).");
 
         // The vanilla MapLayers are instantiated by WorldMapManager AFTER all ModSystems'
         // StartClientSide complete, so the MapLayers collection is empty at this point.
-        // Defer the enumeration + vanilla-hide to LevelFinalize, which fires once the world
-        // is fully loaded and every MapLayer (ours included) has been instantiated.
+        // Defer the enumeration to LevelFinalize, which fires once the world is fully loaded
+        // and every MapLayer (ours included) has been instantiated.
         api.Event.LevelFinalize += () => OnLevelFinalize(api, mapManager, manifoldClient);
     }
 
@@ -101,8 +106,8 @@ public sealed class ChartModSystem : ModSystem
     }
 
     /// <summary>
-    /// LevelFinalize work: hides the vanilla terrain layer, verifies the waypoint layer
-    /// replacement won, and runs the startup orphan-cache scan.
+    /// LevelFinalize work: verifies that our layers replaced the vanilla ones, and runs the
+    /// startup orphan-cache scan.
     /// </summary>
     private void OnLevelFinalize(ICoreClientAPI api, WorldMapManager mapManager, IManifoldClient? manifoldClient)
     {
@@ -114,25 +119,15 @@ public sealed class ChartModSystem : ModSystem
                 layer.LayerGroupCode);
         }
 
-        var vanilla = mapManager.MapLayers.FirstOrDefault(
-            l => l.GetType().Name == "ChunkMapLayer");
-        if (vanilla is not null)
+        // The layers are replaced by type re-registration, so just verify ours were created:
+        // another mod re-registering "chunks" or "waypoints" after us would bring the vanilla
+        // behaviour back without this trace.
+        if (FindLayer<DimensionAwareChunkMapLayer>(api) is null)
         {
-            vanilla.Active = false;
-            bool removed = mapManager.MapLayers.Remove(vanilla);
-            api.Logger.Notification(
-                "[Chart] Vanilla ChunkMapLayer Active=false, Removed={0} (type={1}).",
-                removed,
-                vanilla.GetType().FullName);
-        }
-        else
-        {
-            api.Logger.Warning("[Chart] Vanilla ChunkMapLayer not found - may render on top.");
+            api.Logger.Warning(
+                "[Chart] DimensionAwareChunkMapLayer was not instantiated - another mod likely re-registered the 'chunks' layer. Custom dimensions will not be mapped.");
         }
 
-        // The waypoint layer is replaced by type re-registration rather than removal, so
-        // just verify it won: another mod re-registering "waypoints" after us would put
-        // the cross-dim pin bleed back without this trace.
         if (FindLayer<DimensionAwareWaypointMapLayer>(api) is null)
         {
             api.Logger.Warning(
