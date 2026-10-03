@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Atlas test harness bumped to 0.16.0, its first stable release with the client-side observations.
+
 ## [0.4.0] - 2026-10-02
 
 ### Added
